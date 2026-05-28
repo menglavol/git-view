@@ -1344,7 +1344,7 @@ Token 安全存储且不泄漏。US1 独立可发布。
 **Independent Test**: 打开仓库，修改文件，查看 diff 高亮；stage 一个文件，输入
 commit message 提交成功；执行 push 远程更新。
 
-- [ ] T077 [US5] 扩展 git_cli_service：stage / unstage / commit / discard
+- [x] T077 [US5] 扩展 git_cli_service：stage / unstage / commit / discard
 
   **目标**：实现仓库的写入类 Git 操作。
 

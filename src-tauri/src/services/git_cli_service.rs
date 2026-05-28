@@ -218,6 +218,147 @@ impl GitCliService {
 
         Ok(())
     }
+
+    // =====================================================================
+    // 工作区写入操作（T077 — US5 单仓库工作流）
+    // =====================================================================
+
+    /// 把单个文件加入暂存区。
+    pub async fn stage_file(&self, repo: &Path, file: &str) -> Result<()> {
+        let output = self.run(&["add", "--", file], Some(repo), &[]).await?;
+        ensure_success(&output, "git add")
+    }
+
+    /// 把当前工作区全部变更加入暂存区（含未跟踪文件）。
+    pub async fn stage_all(&self, repo: &Path) -> Result<()> {
+        let output = self.run(&["add", "-A"], Some(repo), &[]).await?;
+        ensure_success(&output, "git add -A")
+    }
+
+    /// 把单个文件从暂存区移除（保留工作区修改）。
+    pub async fn unstage_file(&self, repo: &Path, file: &str) -> Result<()> {
+        let output = self
+            .run(&["restore", "--staged", "--", file], Some(repo), &[])
+            .await?;
+        ensure_success(&output, "git restore --staged")
+    }
+
+    /// 清空整个暂存区（保留工作区修改）。
+    pub async fn unstage_all(&self, repo: &Path) -> Result<()> {
+        let output = self
+            .run(&["restore", "--staged", "."], Some(repo), &[])
+            .await?;
+        ensure_success(&output, "git restore --staged .")
+    }
+
+    /// 通过临时文件机制提交，规避命令行转义对多行/中文/特殊字符的破坏。
+    ///
+    /// 步骤：
+    ///   1. 拼接 `message` 与可选 `description`（中间空一行，遵循 Git 习惯）
+    ///   2. 写入 `.git/COMMIT_GITVIEW`（位于仓库 .git 目录，属于 Git 自身
+    ///      housekeeping 范畴，Principle III 允许直接读写）
+    ///   3. `git commit -F <file> --cleanup=strip`
+    ///   4. 无论成败均删除临时文件
+    ///
+    /// 返回 stdout 文本（含新 commit 摘要），便于上层记录操作日志。
+    pub async fn commit(
+        &self,
+        repo: &Path,
+        message: &str,
+        description: Option<&str>,
+    ) -> Result<String> {
+        if message.trim().is_empty() {
+            return Err(GitViewError::Internal(
+                "commit message 不能为空".to_string(),
+            ));
+        }
+
+        let commit_file = repo.join(".git").join("COMMIT_GITVIEW");
+        let mut body = message.trim().to_string();
+        if let Some(desc) = description {
+            let desc_trimmed = desc.trim();
+            if !desc_trimmed.is_empty() {
+                body.push_str("\n\n");
+                body.push_str(desc_trimmed);
+            }
+        }
+        body.push('\n');
+
+        std::fs::write(&commit_file, &body)
+            .map_err(|e| GitViewError::Internal(format!("写入 COMMIT_GITVIEW 失败：{e}")))?;
+
+        let commit_file_str = commit_file.to_string_lossy().into_owned();
+        let run_result = self
+            .run(
+                &["commit", "-F", &commit_file_str, "--cleanup=strip"],
+                Some(repo),
+                &[],
+            )
+            .await;
+
+        // 无论 commit 是否成功，都尝试清理临时文件；忽略删除失败（next 次 commit 会覆盖）
+        let _ = std::fs::remove_file(&commit_file);
+
+        let output = run_result?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(GitViewError::GitCommand(format!(
+                "git commit 失败：{stderr}"
+            )));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// 丢弃工作区变更（不可恢复）。
+    ///
+    /// **安全约束（宪法 Principle III）**：仅当 `confirmed = true` 时执行；
+    /// 调用方必须先通过 `ConfirmDangerDialog` 让用户输入关键词确认，再传
+    /// `confirmed: true`。否则返回 `UserCancelled` 作为双重防御。
+    ///
+    /// 实现策略：先 `git checkout HEAD -- <files>` 恢复已跟踪文件，再
+    /// `git clean -fd -- <files>` 清理未跟踪文件。两步独立执行，只要其中
+    /// 一步成功即视为成功（适配混合已跟踪/未跟踪的文件集合）；都失败时
+    /// 汇总 stderr 返回。
+    pub async fn discard_changes(
+        &self,
+        repo: &Path,
+        files: &[&str],
+        confirmed: bool,
+    ) -> Result<()> {
+        if !confirmed {
+            return Err(GitViewError::UserCancelled);
+        }
+        if files.is_empty() {
+            return Ok(());
+        }
+
+        let mut checkout_args: Vec<&str> = vec!["checkout", "HEAD", "--"];
+        checkout_args.extend(files.iter().copied());
+        let checkout_out = self.run(&checkout_args, Some(repo), &[]).await?;
+
+        let mut clean_args: Vec<&str> = vec!["clean", "-fd", "--"];
+        clean_args.extend(files.iter().copied());
+        let clean_out = self.run(&clean_args, Some(repo), &[]).await?;
+
+        if !checkout_out.status.success() && !clean_out.status.success() {
+            let stderr_checkout = String::from_utf8_lossy(&checkout_out.stderr);
+            let stderr_clean = String::from_utf8_lossy(&clean_out.stderr);
+            return Err(GitViewError::GitCommand(format!(
+                "git discard 失败：checkout={stderr_checkout} clean={stderr_clean}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// 校验子进程退出状态，失败时把 stderr 拼入错误信息。
+fn ensure_success(output: &std::process::Output, label: &str) -> Result<()> {
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(GitViewError::GitCommand(format!("{label} 失败：{stderr}")))
+    }
 }
 
 // =====================================================================
@@ -568,5 +709,44 @@ mod tests {
             .to_string();
         assert!(!name.contains("secret"));
         assert!(!name.contains("ghp_"));
+    }
+
+    // -------------------------------------------------------------------
+    // T077 — 写入操作的防御性测试（不依赖真实 git 子进程）
+    // -------------------------------------------------------------------
+
+    /// 验收标准（T077）：commit message 为空时立即返回 Internal 错误，
+    /// 不写入临时文件、不调用 git 子进程。
+    #[tokio::test]
+    async fn commit_rejects_empty_message_without_invoking_git() {
+        let svc = GitCliService::with_path(PathBuf::from("git"));
+        let tmp = std::env::temp_dir();
+        let err = svc.commit(&tmp, "   \n  ", None).await.unwrap_err();
+        assert!(matches!(err, GitViewError::Internal(_)));
+        // 临时文件目录中不应留下 COMMIT_GITVIEW
+        assert!(!tmp.join(".git").join("COMMIT_GITVIEW").exists());
+    }
+
+    /// 验收标准（T077 + Principle III）：discard_changes 在 confirmed = false
+    /// 时必须立即返回 UserCancelled，作为对前端 ConfirmDangerDialog 的双重防御。
+    #[tokio::test]
+    async fn discard_without_confirmed_returns_user_cancelled() {
+        let svc = GitCliService::with_path(PathBuf::from("git"));
+        let err = svc
+            .discard_changes(Path::new("/nonexistent"), &["a.txt"], false)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, GitViewError::UserCancelled));
+    }
+
+    /// 验收标准（T077）：discard_changes 在 files 为空时直接成功，
+    /// 不会触发任何 git 调用（避免对整个工作区误操作）。
+    #[tokio::test]
+    async fn discard_with_empty_files_is_noop() {
+        let svc = GitCliService::with_path(PathBuf::from("git"));
+        let res = svc
+            .discard_changes(Path::new("/nonexistent"), &[], true)
+            .await;
+        assert!(res.is_ok());
     }
 }
