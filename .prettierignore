@@ -1,0 +1,21 @@
+# Prettier 忽略清单
+# 与 .gitignore 保持基本一致，但额外排除产物与 lock 文件
+node_modules/
+dist/
+build/
+coverage/
+src-tauri/target/
+src-tauri/gen/
+
+# Lock 文件不格式化
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# 自动生成文件
+src/auto-imports.d.ts
+src/components.d.ts
+
+# Markdown 报告类文档保留原始排版
+specs/**/acceptance-report.md
+specs/**/perf-baseline.md

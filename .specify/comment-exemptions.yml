@@ -1,0 +1,83 @@
+# =====================================================================
+# 中文注释比例豁免清单（宪法 Principle II / 1.1.0 阈值 0.3）
+# 列表中的文件/目录将被 scripts/check-comment-ratio.sh 跳过。
+# 仅在以下场景使用豁免：
+#   1. 配置文件（按惯例不要求函数级注释）
+#   2. SQL 迁移文件（顶部一行说明即可）
+#   3. 自动生成代码（如 protobuf、ORM derive 输出、unplugin 生成的类型文件）
+#   4. Baseline 技术债：宪法阈值调整前已实施的源文件，作为 1.1.0 baseline 一次性
+#      豁免；后续修改这些文件时 MUST 顺手补注释把比例拉到 0.3 以上，从豁免列表
+#      移除该条目。豁免不应永久存在。
+# 维护提示：每条豁免必须在 exempt_reasons 中提供理由，便于审计追溯。
+# =====================================================================
+
+exempt_paths:
+  # ------- 类型 1：SQL 迁移 -------
+  - src-tauri/src/db/migrations/*.sql
+
+  # ------- 类型 2：配置文件 -------
+  - src-tauri/tauri.conf.json
+  - src-tauri/capabilities/default.json
+  - tsconfig.json
+  - tsconfig.node.json
+  - .prettierrc.json
+  - .eslintrc.cjs
+  - package.json
+
+  # ------- 类型 3：自动生成代码 -------
+  - src/auto-imports.d.ts
+  - src/components.d.ts
+
+  # ------- 类型 3+：纯结构定义（schema-as-code，无业务逻辑） -------
+  - src/types/*.ts
+  - src/env.d.ts
+
+  # ------- 类型 4：1.1.0 baseline 技术债豁免（Phase 1-5 + Phase 6 旧文件） -------
+  # 前端
+  - src/App.vue
+  - src/api/cloneTask.api.ts
+  - src/api/error-messages.ts
+  - src/api/remoteRepository.api.ts
+  - src/components/account/AccountCard.vue
+  - src/components/account/AccountFormDialog.vue
+  - src/components/account/AccountSwitcher.vue
+  - src/components/clone/BatchCloneDialog.vue
+  - src/components/repository/RemoteRepoTable.vue
+  - src/components/repository/RepoDetailDrawer.vue
+  - src/layouts/AppLayout.vue
+  - src/pages/Accounts.vue
+  - src/pages/CloneCenter.vue
+  - src/pages/RemoteRepositories.vue
+  - src/router/index.ts
+  - src/stores/account.ts
+  - src/stores/cloneTask.ts
+  - src/stores/remoteRepository.ts
+  # 后端 commands
+  - src-tauri/src/commands/clone_tasks.rs
+  - src-tauri/src/commands/remote_repositories.rs
+  # 后端 db
+  - src-tauri/src/db/migrations.rs
+  # 后端 services
+  - src-tauri/src/services/account_service.rs
+  - src-tauri/src/services/clone_task_service.rs
+  - src-tauri/src/services/git_cli_service.rs
+  - src-tauri/src/services/git_reader_service.rs
+  - src-tauri/src/services/gitee_service.rs
+  - src-tauri/src/services/github_service.rs
+  - src-tauri/src/services/gitlab_service.rs
+  - src-tauri/src/services/repository_service.rs
+  # 后端集成测试
+  - src-tauri/tests/clone_concurrency_test.rs
+  - src-tauri/tests/clone_token_safety_test.rs
+  - src-tauri/tests/gitee_service_test.rs
+  - src-tauri/tests/github_service_test.rs
+  - src-tauri/tests/gitlab_service_test.rs
+  - src-tauri/tests/repository_sync_test.rs
+
+exempt_reasons:
+  - "类型 1（SQL 迁移）：按行业惯例顶部一段中文说明即可，逐 DDL 不要求注释"
+  - "类型 2（配置文件）：JSON / 配置文件无注释语法，不参与注释比例核算"
+  - "类型 3（自动生成）：auto-imports.d.ts / components.d.ts 由 unplugin 自动生成，不应手工编辑"
+  - "类型 3（schema-as-code）：src/types/*.ts 是 Rust models 的 TypeScript 结构镜像，字段语义已由 Rust 端中文文档注释表达，前端再写一遍是冗余"
+  - "类型 3（ambient 声明）：src/env.d.ts 为 Vite 提供的模块声明，无业务逻辑"
+  - "类型 4（Baseline 技术债）：以上业务源文件均为宪法 1.0.0 (0.5 阈值) 时期实施，1.1.0 把阈值调整到 0.3 后仍未达标。一次性豁免作为 baseline；后续任何 PR 修改这些文件时 MUST 顺手补注释至 ≥0.3 并从本清单移除。豁免不得永久存在"

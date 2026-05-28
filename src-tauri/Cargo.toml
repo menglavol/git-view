@@ -1,0 +1,128 @@
+# =====================================================================
+# GitView Rust 后端 Cargo 配置
+# 作用：声明 Tauri 应用所需的核心依赖、构建脚本、目标平台特性，
+#       并集中开启 Rust 静态分析规则以满足宪法 Principle I（代码质量）。
+# 维护提示：新增依赖时务必在 PR 描述中说明用途、许可证、维护活跃度
+#          （宪法 §工程约束 — 依赖与安全）。
+# =====================================================================
+
+[package]
+name = "gitview"
+version = "0.1.0"
+description = "GitView — 轻量级跨平台 Git 可视化客户端"
+authors = ["GitView Team"]
+edition = "2021"
+rust-version = "1.75"
+
+# Tauri 默认使用 dynamic linking 编译为 cdylib，配合主 binary 形成最终可执行
+[lib]
+name = "gitview_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+# ----- Tauri 框架核心 -----
+tauri = { version = "2.0", features = [] }
+tauri-plugin-dialog = "2.0"
+tauri-plugin-fs = "2.0"
+tauri-plugin-os = "2.0"
+tauri-plugin-shell = "2.0"
+
+# ----- 异步运行时与工具 -----
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
+
+# ----- HTTP 客户端（含 rustls，便于自签名证书白名单）-----
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+  "rustls-tls-native-roots",
+  "gzip",
+] }
+
+# ----- 序列化 -----
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ----- 数据库（SQLite 嵌入）-----
+rusqlite = { version = "0.31", features = ["bundled", "chrono"] }
+
+# ----- 操作系统凭据存储（macOS Keychain / Windows Credential Manager / Linux Secret Service）-----
+keyring = "2"
+
+# ----- 日志 -----
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# ----- 错误处理 -----
+thiserror = "1"
+anyhow = "1"
+
+# ----- 唯一标识与时间 -----
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# ----- 跨平台路径与 URL -----
+dunce = "1"
+url = "2"
+dirs = "5"
+
+# ----- 异步 trait（GitHostingProvider 抽象需要）-----
+async-trait = "0.1"
+
+# ----- 正则（utils::redact 用于 token 脱敏匹配）-----
+regex = "1"
+
+# ----- 静态初始化（编译期生成的 Regex 复用）-----
+once_cell = "1"
+
+# ----- 目录遍历（本地仓库扫描）-----
+walkdir = "2"
+
+[dev-dependencies]
+# 单元/集成测试辅助
+tempfile = "3"
+wiremock = "0.6"
+
+# =====================================================================
+# 静态分析（宪法 Principle I — 代码质量优先）
+# clippy 配置在 src-tauri/clippy.toml；format 配置在 src-tauri/.rustfmt.toml
+# =====================================================================
+
+[lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+# pedantic / nursery 调到 warn 级别，给团队留出渐进式收敛空间，
+# 但 CI 通过 `-D warnings` 把 warn 全部视为错误（package.json rust:clippy）。
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# 显式 deny 几个高危项
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "deny"
+todo = "warn"
+unimplemented = "warn"
+# 中文文档中夹杂英文专有名词（SQLite/Tauri/GitView/Token 等）频繁触发，
+# 实用价值低，统一关闭。
+doc_markdown = "allow"
+# 错误统一由 GitViewError 表达，前端按 code 字段处理，
+# 在每个函数文档重复列 # Errors 段价值有限。
+missing_errors_doc = "allow"
+# panic 文档同理：仅在 main entry 与启动期错误使用，统一关闭。
+missing_panics_doc = "allow"
+
+# =====================================================================
+# 编译产物优化（仅发布构建生效）
+# =====================================================================
+
+[profile.release]
+opt-level = 3
+lto = true # Link Time Optimization 进一步缩减二进制体积
+codegen-units = 1
+panic = "abort"
+strip = true

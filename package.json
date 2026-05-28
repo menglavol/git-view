@@ -1,0 +1,58 @@
+{
+  "name": "gitview",
+  "private": true,
+  "version": "0.1.0",
+  "description": "GitView — 轻量级跨平台 Git 可视化客户端 (Tauri 2 + Vue 3 + Rust)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "lint": "eslint . --ext .ts,.vue --max-warnings 0",
+    "lint:fix": "eslint . --ext .ts,.vue --fix",
+    "format": "prettier --write \"src/**/*.{ts,vue,json,css}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,vue,json,css}\"",
+    "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+    "rust:fmt:fix": "cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:comment-ratio": "bash scripts/check-comment-ratio.sh --changed-only",
+    "check:comment-ratio:all": "bash scripts/check-comment-ratio.sh --all",
+    "check:no-debug-prints": "bash scripts/check-no-debug-prints.sh",
+    "check:no-token-leak": "bash scripts/check-no-token-leak.sh",
+    "check:all": "npm run lint && npm run format:check && npm run rust:fmt && npm run rust:clippy && npm run check:comment-ratio && npm run check:no-debug-prints"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
+    "@tauri-apps/plugin-os": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "element-plus": "^2.7.0",
+    "pinia": "^2.1.0",
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "@vue/tsconfig": "^0.5.1",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^9.20.0",
+    "prettier": "^3.2.0",
+    "typescript": "^5.4.0",
+    "unplugin-auto-import": "^0.17.0",
+    "unplugin-vue-components": "^0.26.0",
+    "vite": "^5.2.0",
+    "vue-tsc": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

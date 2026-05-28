@@ -1,0 +1,9 @@
+# Rustfmt 配置 — 与宪法 Principle I 对齐
+# 维持团队统一的 Rust 代码格式，最大行宽 100 与 Prettier 同步
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+edition = "2021"

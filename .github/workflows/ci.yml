@@ -1,0 +1,122 @@
+name: CI
+
+# =====================================================================
+# GitView 持续集成工作流
+# 触发：push 到任意分支、向 main 提交 PR
+# 平台矩阵：ubuntu-latest / macos-latest / windows-latest（宪法 §工程约束 - 技术栈）
+# 强制门禁（宪法 Principle I / II）：
+#   - 前端 lint + format:check
+#   - 后端 cargo fmt + clippy(-D warnings)
+#   - 中文注释比例 ≥ 50%（按文件粒度，T006 脚本）
+#   - 无遗留调试输出（T007 脚本）
+#   - 跨平台构建（前端 build + cargo build）
+# =====================================================================
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ----------------------------------------------------------------------
+  # 静态检查（仅在 Ubuntu 上跑，节省时间）
+  # ----------------------------------------------------------------------
+  static-checks:
+    name: Static Checks (Lint / Format / 中文注释比例)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux system deps (for cargo build steps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier check
+        run: npm run format:check
+
+      - name: rustfmt check
+        run: npm run rust:fmt
+
+      - name: clippy (-D warnings)
+        run: npm run rust:clippy
+
+      - name: 中文注释比例检查（宪法 Principle II — 仅新增/修改文件）
+        # --changed-only：用 git diff 取本 PR 新增/修改的 .rs/.ts/.vue 文件，
+        # 只对它们核算 ≥0.5 中文注释比例。老代码作为既有技术债不阻断 CI；
+        # 但任何新接触代码必须达标，避免欠债扩大。
+        run: bash scripts/check-comment-ratio.sh --changed-only
+
+      - name: 调试输出检查（宪法 Principle I）
+        run: bash scripts/check-no-debug-prints.sh
+
+      - name: Token 泄漏扫描（宪法 Principle III）
+        run: bash scripts/check-no-token-leak.sh
+
+  # ----------------------------------------------------------------------
+  # 跨平台构建（macOS / Windows / Ubuntu）
+  # ----------------------------------------------------------------------
+  build:
+    name: Build on ${{ matrix.os }}
+    needs: static-checks
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Type check + Vite build
+        run: npm run build
+
+      - name: Cargo build (release dry)
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features

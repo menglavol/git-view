@@ -1,0 +1,9 @@
+# Clippy 配置
+# avoid-breaking-exported-api：允许 lint 规则触及公开 API，便于早期发现问题
+avoid-breaking-exported-api = false
+
+# 单函数认知复杂度阈值（防止逻辑过度集中）
+cognitive-complexity-threshold = 30
+
+# 单行字符串字面量长度
+max-include-file-size = 1000000

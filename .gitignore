@@ -1,0 +1,109 @@
+# ====================================================================
+# GitView 项目 .gitignore
+# 涵盖：Node.js / TypeScript / Vue 前端、Rust 后端、Tauri 桌面打包、
+#       macOS / Windows / Linux 系统残留、IDE 配置、日志与凭据缓存。
+# 修改时请保持中文注释，方便团队成员理解每段规则的用途。
+# ====================================================================
+
+# ---------- Node.js / 前端构建 ----------
+# 依赖目录：体积大、可通过 package-lock.json 还原
+node_modules/
+# Vite/Webpack 构建产物
+dist/
+build/
+.vite/
+# 包管理器中间缓存
+.npm/
+.yarn/
+.pnp.*
+# 调试日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- TypeScript 中间产物 ----------
+# tsc 增量编译缓存
+*.tsbuildinfo
+
+# ---------- Rust / Cargo ----------
+# 编译产物（src-tauri/target 由 cargo 自动管理）
+target/
+src-tauri/target/
+# Cargo 备份
+**/*.rs.bk
+# 增量编译中间文件
+**/incremental/
+
+# ---------- Tauri 打包产物 ----------
+src-tauri/gen/
+src-tauri/WixTools/
+*.app/
+*.dmg
+*.exe
+*.msi
+*.deb
+*.AppImage
+*.rpm
+
+# ---------- 测试覆盖率 ----------
+coverage/
+*.lcov
+.nyc_output/
+
+# ---------- 环境变量与机密 ----------
+# 严禁提交任何含 Token / 密钥 / 证书的文件（宪法 Principle III）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+
+# ---------- IDE 与编辑器 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+.history/
+
+# ---------- 操作系统残留 ----------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+# Linux
+.directory
+*~
+
+# ---------- GitView 应用运行时数据（本地开发场景）----------
+# 本地调试时 SQLite 数据库与日志默认写入 OS 用户目录；
+# 若手工放在仓库内调试，统一进入 .gitview-local/ 子目录。
+.gitview-local/
+
+# ---------- 临时与备份 ----------
+*.tmp
+*.bak
+*.orig
+*.log
+logs/
+
+# ---------- speckit 工作产物（已在 .specify/ 跟踪）----------
+# 不忽略 .specify/，但忽略其下的运行时缓存
+.specify/cache/
+
+# ---------- AI 会话日志（design-diary）----------
+# AI 协作过程的会话原文，仅用于本地复盘，不污染代码主线历史
+design-diary/
