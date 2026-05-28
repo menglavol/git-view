@@ -209,6 +209,22 @@ pub fn run() {
             commands::local_repositories::batch_fetch_repositories,
             commands::local_repositories::open_repository_folder,
             commands::local_repositories::open_repository_in_terminal,
+            // US5 单仓库 Git 工作流（15 个）
+            commands::git::git_status,
+            commands::git::git_diff,
+            commands::git::git_list_branches,
+            commands::git::git_log,
+            commands::git::git_stage_file,
+            commands::git::git_unstage_file,
+            commands::git::git_stage_all,
+            commands::git::git_unstage_all,
+            commands::git::git_commit,
+            commands::git::git_fetch,
+            commands::git::git_pull,
+            commands::git::git_push,
+            commands::git::git_checkout_branch,
+            commands::git::git_create_branch,
+            commands::git::git_discard_changes,
         ])
         .run(tauri::generate_context!())
         .expect("启动 GitView 应用失败：Tauri Builder.run() 异常");

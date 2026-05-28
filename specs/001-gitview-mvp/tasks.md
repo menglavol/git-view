@@ -1369,7 +1369,7 @@ commit message 提交成功；执行 push 远程更新。
   **验收标准**：本地实测各操作；commit 多行 message 与中文内容正确入库；
   discard 无 confirmed 标志时返回 UserCancelled。
 
-- [ ] T078 [US5] 扩展 git_cli_service：fetch / pull / push
+- [x] T078 [US5] 扩展 git_cli_service：fetch / pull / push
 
   **目标**：网络相关 Git 操作（同文件，依赖 T077 完成）。
 
@@ -1383,7 +1383,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：本地实测 fetch/pull/push；故意触发非快进时返回正确错误码。
 
-- [ ] T079 [US5] 扩展 git_cli_service：list_branches / checkout / create_branch
+- [x] T079 [US5] 扩展 git_cli_service：list_branches / checkout / create_branch
 
   **目标**：分支管理基础操作（同文件，依赖 T078 完成）。
 
@@ -1401,7 +1401,7 @@ commit message 提交成功；执行 push 远程更新。
   **验收标准**：本地实测 branch 列表、切换、创建；脏工作区下切换分支返回
   `DirtyWorkdir`。
 
-- [ ] T080 [US5] 实现 Git Tauri commands `src-tauri/src/commands/git.rs`
+- [x] T080 [US5] 实现 Git Tauri commands `src-tauri/src/commands/git.rs`
 
   **目标**：注册 **15 个 git_* command**。
 
@@ -1417,7 +1417,7 @@ commit message 提交成功；执行 push 远程更新。
   **验收标准**：**15 个命令**均注册且 capabilities 允许；`git_discard_changes`
   无 confirmed=true 时返回 UserCancelled。
 
-- [ ] T081 [US5] 实现 commit 前置校验逻辑 `account_service.rs` 或 `git_cli_service.rs`
+- [x] T081 [US5] 实现 commit 前置校验逻辑 `account_service.rs` 或 `git_cli_service.rs`
 
   **目标**：spec FR-038 / Acceptance Scenarios，提交前校验 5 项。
 
@@ -1431,7 +1431,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：5 项校验单元测试均覆盖。
 
-- [ ] T082 [P] [US5] 实现前端 Git API 与 RepositoryDetail 页面骨架
+- [x] T082 [P] [US5] 实现前端 Git API 与 RepositoryDetail 页面骨架
 
   **目标**：`src/api/git.api.ts` + `src/pages/RepositoryDetail.vue` 三栏布局。
 
@@ -1536,7 +1536,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：手工触发各场景显示对应文案。
 
-- [ ] T089 [US5] 接入 RepositoryDetail.vue 路由从 LocalRepositories.vue 打开
+- [x] T089 [US5] 接入 RepositoryDetail.vue 路由从 LocalRepositories.vue 打开
 
   **目标**：从本地仓库列表的"打开仓库"按钮跳转到详情页。
 

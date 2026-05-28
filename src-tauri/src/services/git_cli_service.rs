@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::errors::{GitViewError, Result};
+use crate::models::git::FileStatus;
 use crate::utils::redact::redact_token;
 
 /// Git 检测结果。
@@ -349,6 +350,226 @@ impl GitCliService {
         }
         Ok(())
     }
+
+    // =====================================================================
+    // 网络相关操作（T078 — fetch / pull / push）
+    // =====================================================================
+
+    /// 同步所有远程信息并清理已删除的远端追踪分支。
+    ///
+    /// 对应 spec FR-040：`git fetch --all --prune`。
+    /// 输出经 `redact_token` 脱敏后返回，便于上层写入操作日志。
+    pub async fn fetch(&self, repo: &Path) -> Result<String> {
+        let output = self
+            .run(&["fetch", "--all", "--prune"], Some(repo), &[])
+            .await?;
+        let stderr = redact_token(&String::from_utf8_lossy(&output.stderr));
+        if !output.status.success() {
+            return Err(map_network_failure("fetch", &stderr));
+        }
+        let stdout = redact_token(&String::from_utf8_lossy(&output.stdout));
+        Ok(format!("{stdout}{stderr}"))
+    }
+
+    /// 快进合并远程更新。
+    ///
+    /// 对应 spec FR-040 / FR-041：默认使用 `--ff-only`，遇 non-fast-forward
+    /// 或冲突时返回带中文翻译的 `GitCommand` 错误，前端可按关键词区分提示。
+    pub async fn pull(&self, repo: &Path) -> Result<String> {
+        let output = self.run(&["pull", "--ff-only"], Some(repo), &[]).await?;
+        let stderr = redact_token(&String::from_utf8_lossy(&output.stderr));
+        if !output.status.success() {
+            let lower = stderr.to_lowercase();
+            if lower.contains("not possible to fast-forward")
+                || lower.contains("non-fast-forward")
+                || lower.contains("diverged")
+            {
+                return Err(GitViewError::GitCommand(format!(
+                    "Pull 失败：本地与远程分支已分叉，无法快进合并，请使用外部工具解决冲突后再继续。{stderr}"
+                )));
+            }
+            if lower.contains("conflict") || lower.contains("merge_msg") {
+                return Err(GitViewError::GitCommand(format!(
+                    "Pull 后存在冲突，请使用外部工具（如 VS Code 或 git mergetool）解决冲突后再提交。{stderr}"
+                )));
+            }
+            return Err(map_network_failure("pull", &stderr));
+        }
+        let stdout = redact_token(&String::from_utf8_lossy(&output.stdout));
+        Ok(format!("{stdout}{stderr}"))
+    }
+
+    /// 推送当前分支到远程。
+    ///
+    /// 对应 spec FR-042：解析常见拒绝原因（non-fast-forward / no upstream /
+    /// permission denied）映射到带中文友好提示的错误。
+    pub async fn push(&self, repo: &Path) -> Result<String> {
+        let output = self.run(&["push"], Some(repo), &[]).await?;
+        let stderr = redact_token(&String::from_utf8_lossy(&output.stderr));
+        if !output.status.success() {
+            let lower = stderr.to_lowercase();
+            if lower.contains("non-fast-forward") || lower.contains("rejected") {
+                return Err(GitViewError::GitCommand(format!(
+                    "推送被拒绝（远程有新提交），请先 Pull 远程更新后再推送。{stderr}"
+                )));
+            }
+            if lower.contains("no upstream") || lower.contains("set-upstream") {
+                return Err(GitViewError::GitCommand(format!(
+                    "当前分支没有 upstream，请配置上游分支后再推送（git push -u origin <branch>）。{stderr}"
+                )));
+            }
+            if lower.contains("permission denied") || lower.contains("authentication failed") {
+                return Err(GitViewError::Forbidden);
+            }
+            return Err(map_network_failure("push", &stderr));
+        }
+        let stdout = redact_token(&String::from_utf8_lossy(&output.stdout));
+        Ok(format!("{stdout}{stderr}"))
+    }
+
+    // =====================================================================
+    // 分支管理操作（T079 — checkout / create_branch）
+    // =====================================================================
+
+    /// 切换到指定分支。
+    ///
+    /// 对应 spec FR-044：调用前必先校验工作区干净，存在未提交变更时返回
+    /// `DirtyWorkdir`，由前端按错误码 disable 切换按钮并 tooltip 提示。
+    pub async fn checkout_branch(&self, repo: &Path, name: &str) -> Result<()> {
+        let status = crate::services::git_reader_service::status(repo).await?;
+        if !status.is_clean {
+            return Err(GitViewError::DirtyWorkdir);
+        }
+        let output = self.run(&["checkout", name], Some(repo), &[]).await?;
+        ensure_success(&output, "git checkout")
+    }
+
+    /// 创建新分支，可选择是否立即切换。
+    ///
+    /// 新建分支本身不修改工作区文件，因此 **不受脏工作区阻断**；
+    /// 但 `checkout = true` 时若 git 自身判定与未提交变更冲突，会由 git
+    /// 本身返回错误并由 `ensure_success` 透传。
+    pub async fn create_branch(&self, repo: &Path, name: &str, checkout: bool) -> Result<()> {
+        let args: Vec<&str> = if checkout {
+            vec!["checkout", "-b", name]
+        } else {
+            vec!["branch", name]
+        };
+        let output = self.run(&args, Some(repo), &[]).await?;
+        ensure_success(
+            &output,
+            if checkout {
+                "git checkout -b"
+            } else {
+                "git branch"
+            },
+        )
+    }
+
+    /// 从远程分支 checkout 出本地分支并自动设置 upstream。
+    ///
+    /// 等价于 `git checkout -b <local> <remote>`。同样受脏工作区阻断。
+    pub async fn checkout_remote_branch(
+        &self,
+        repo: &Path,
+        remote_branch: &str,
+        local_name: &str,
+    ) -> Result<()> {
+        let status = crate::services::git_reader_service::status(repo).await?;
+        if !status.is_clean {
+            return Err(GitViewError::DirtyWorkdir);
+        }
+        let output = self
+            .run(
+                &["checkout", "-b", local_name, remote_branch],
+                Some(repo),
+                &[],
+            )
+            .await?;
+        ensure_success(&output, "git checkout -b (remote)")
+    }
+
+    // =====================================================================
+    // commit 前置校验（T081 — FR-038 五项校验）
+    // =====================================================================
+
+    /// commit 前置 5 项校验。
+    ///
+    /// 对应 spec FR-038 与 US5 Acceptance Scenario 6/7。任一未通过即返回
+    /// 含中文原因的 `Internal` 错误，调用方可在前端直接展示给用户。
+    ///
+    /// 校验项：
+    ///   1. Git `user.name` 已配置（全局或仓库级）
+    ///   2. Git `user.email` 已配置
+    ///   3. 非 detached HEAD
+    ///   4. 非 conflict 状态（无 Conflicted 文件）
+    ///   5. 已暂存文件 > 0
+    ///
+    /// 注：message 是否为空由 [`Self::commit`] 自身校验，本函数仅检查环境。
+    pub async fn pre_commit_check(&self, repo: &Path) -> Result<()> {
+        if !self.git_config_present(repo, "user.name").await {
+            return Err(GitViewError::Internal(
+                "Git user.name 未配置，请在设置中配置 Git 身份后再提交".to_string(),
+            ));
+        }
+        if !self.git_config_present(repo, "user.email").await {
+            return Err(GitViewError::Internal(
+                "Git user.email 未配置，请在设置中配置 Git 身份后再提交".to_string(),
+            ));
+        }
+
+        let status = crate::services::git_reader_service::status(repo).await?;
+
+        if status.current_branch.is_none() {
+            return Err(GitViewError::Internal(
+                "当前处于 detached HEAD 状态，请先创建分支后再提交".to_string(),
+            ));
+        }
+
+        let has_conflict = status
+            .changes
+            .iter()
+            .any(|c| c.status == FileStatus::Conflicted);
+        if has_conflict {
+            return Err(GitViewError::Internal(
+                "工作区存在冲突文件，请先解决冲突后再提交".to_string(),
+            ));
+        }
+
+        let has_staged = status.changes.iter().any(|c| c.staged);
+        if !has_staged {
+            return Err(GitViewError::Internal(
+                "没有已暂存的文件，请先 stage 要提交的文件".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// 检查指定 git config key 是否存在且非空（先查仓库级，回退全局）。
+    async fn git_config_present(&self, repo: &Path, key: &str) -> bool {
+        let Ok(output) = self.run(&["config", "--get", key], Some(repo), &[]).await else {
+            return false;
+        };
+        output.status.success() && !output.stdout.is_empty()
+    }
+}
+
+/// 把网络 Git 命令的 stderr 映射到合适的错误变体。
+///
+/// 优先识别明确的语义（鉴权失败 / DNS 失败），其余兜底为 `GitCommand`。
+fn map_network_failure(label: &str, stderr: &str) -> GitViewError {
+    let lower = stderr.to_lowercase();
+    if lower.contains("could not resolve host") || lower.contains("name or service not known") {
+        return GitViewError::Network(format!("DNS 解析失败：{stderr}"));
+    }
+    if lower.contains("authentication failed") || lower.contains("permission denied") {
+        return GitViewError::Forbidden;
+    }
+    if lower.contains("timed out") || lower.contains("operation timed out") {
+        return GitViewError::Network(format!("连接超时：{stderr}"));
+    }
+    GitViewError::GitCommand(format!("git {label} 失败：{stderr}"))
 }
 
 /// 校验子进程退出状态，失败时把 stderr 拼入错误信息。
@@ -748,5 +969,36 @@ mod tests {
             .discard_changes(Path::new("/nonexistent"), &[], true)
             .await;
         assert!(res.is_ok());
+    }
+
+    // -------------------------------------------------------------------
+    // T078 — 网络命令的 stderr 映射测试
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn map_network_failure_dns_error() {
+        let err = map_network_failure(
+            "fetch",
+            "fatal: unable to access 'https://x.example/': Could not resolve host: x.example",
+        );
+        assert!(matches!(err, GitViewError::Network(_)));
+    }
+
+    #[test]
+    fn map_network_failure_auth_to_forbidden() {
+        let err = map_network_failure("push", "remote: Permission denied to user 'foo'.");
+        assert!(matches!(err, GitViewError::Forbidden));
+    }
+
+    #[test]
+    fn map_network_failure_timeout() {
+        let err = map_network_failure("fetch", "Connection timed out after 10000 ms");
+        assert!(matches!(err, GitViewError::Network(_)));
+    }
+
+    #[test]
+    fn map_network_failure_fallthrough_is_git_command() {
+        let err = map_network_failure("pull", "some unknown failure");
+        assert!(matches!(err, GitViewError::GitCommand(_)));
     }
 }

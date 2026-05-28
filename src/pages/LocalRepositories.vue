@@ -93,12 +93,15 @@
 // =====================================================================
 import { onMounted, ref } from 'vue'; // Vue 组合式 API：生命周期 + 响应式
 import { ElMessage, ElMessageBox } from 'element-plus'; // 消息提示与确认对话框
+import { useRouter } from 'vue-router'; // 路由跳转（US5 仓库详情）
 import { open as openDialog } from '@tauri-apps/plugin-dialog'; // 系统目录选择
 
 import LocalRepoTable from '@/components/repository/LocalRepoTable.vue'; // 列表组件
 import RepoStatusOverview from '@/components/repository/RepoStatusOverview.vue'; // 状态总览组件
 import { useLocalRepositoryStore } from '@/stores/localRepository'; // Pinia store
 import type { LocalRepository } from '@/types/repository'; // 仓库类型定义
+
+const router = useRouter();
 
 // 仓库 store：state 与 actions 都从此获取，UI 不直接调 API
 const store = useLocalRepositoryStore();
@@ -161,10 +164,9 @@ async function onRefreshAll(): Promise<void> {
 // 单行操作：刷新 / Fetch / 打开目录 / 打开终端 / 移除 / 查看详情
 // ---------------------------------------------------------------------
 
-/** 单仓库详情：当前 V1 阶段路由占位，留作 US5 RepositoryDetail.vue 接入。 */
+/** 单仓库详情：跳转到 RepositoryDetail.vue（US5 / T089）。 */
 function onOpenDetail(repo: LocalRepository): void {
-  // US5 时此处将 router.push(`/repositories/${repo.id}`)
-  ElMessage.info(`仓库详情功能将在 US5 实现：${repo.localPath}`);
+  router.push(`/repositories/${repo.id}`);
 }
 
 /** 单仓库刷新：原地更新表格中对应行。 */

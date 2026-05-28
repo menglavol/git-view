@@ -727,7 +727,10 @@ pub async fn batch_fetch(pool: &DbPool, ids: Vec<String>) -> Result<BatchFetchSu
 // 本地仓库辅助
 // =====================================================================
 
-fn load_local_repository(pool: &DbPool, id: &str) -> Result<LocalRepository> {
+/// 按 id 加载本地仓库记录。
+///
+/// 供 commands/git.rs 等需要先解析 repo path 的调用方使用。
+pub fn load_local_repository(pool: &DbPool, id: &str) -> Result<LocalRepository> {
     let id = id.to_string();
     pool.with_conn(move |conn| {
         conn.query_row(

@@ -54,3 +54,9 @@ export interface GitStatus {
   changes: FileChange[];
   isClean: boolean;
 }
+
+/** Diff 查询结果（V1 为纯文本，> 1MB 自动截断）。 */
+export interface DiffResult {
+  text: string;
+  truncated: boolean;
+}
