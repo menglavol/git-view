@@ -1446,7 +1446,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：路由可达；三栏布局可见。
 
-- [ ] T083 [US5] 实现文件变更列表组件 `src/components/git/GitFileChanges.vue`
+- [x] T083 [US5] 实现文件变更列表组件 `src/components/git/GitFileChanges.vue`
 
   **目标**：显示 modified / added / deleted / renamed / untracked / conflict 文件。
 
@@ -1465,7 +1465,7 @@ commit message 提交成功；执行 push 远程更新。
   **验收标准**：与设计文档 §11.4 一致；UI 流畅；discard 流程在
   ConfirmDangerDialog 未通过时**不**触发任何 API 调用。
 
-- [ ] T084 [US5] 实现 Diff 查看器组件 `src/components/git/DiffViewer.vue`
+- [x] T084 [US5] 实现 Diff 查看器组件 `src/components/git/DiffViewer.vue`
 
   **目标**：渲染统一 diff 格式，高亮新增/删除行。
 
@@ -1478,7 +1478,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：渲染本仓库一个真实 diff 显示正确。
 
-- [ ] T085 [US5] 实现 Commit 面板组件 `src/components/git/CommitPanel.vue`
+- [x] T085 [US5] 实现 Commit 面板组件 `src/components/git/CommitPanel.vue`
 
   **目标**：commit message 与 description 输入，提交按钮。
 
@@ -1491,7 +1491,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：手工测试提交流程。
 
-- [ ] T086 [US5] 实现分支选择器组件 `src/components/git/BranchSelector.vue`
+- [x] T086 [US5] 实现分支选择器组件 `src/components/git/BranchSelector.vue`
 
   **目标**：分支切换与新建（实现 FR-044 脏工作区阻断）。
 
@@ -1512,7 +1512,7 @@ commit message 提交成功；执行 push 远程更新。
   **验收标准**：与设计文档 §11.8 V1 范围一致；脏工作区下切换按钮 disable
   且 tooltip 文案准确（对应 spec Acceptance Scenario 11 与 FR-044）。
 
-- [ ] T087 [US5] 实现 CommitHistory 组件（V1 简版）`src/components/git/CommitHistory.vue`
+- [x] T087 [US5] 实现 CommitHistory 组件（V1 简版）`src/components/git/CommitHistory.vue`
 
   **目标**：spec FR-? 与设计文档 §11.9 V1 显示简单提交列表。
 
@@ -1523,7 +1523,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：本仓库 commit 列表可加载且分页正确。
 
-- [ ] T088 [US5] 实现 Pull 冲突与 Push 拒绝错误提示 UI
+- [x] T088 [US5] 实现 Pull 冲突与 Push 拒绝错误提示 UI
 
   **目标**：spec Acceptance Scenarios 10/11 的中文友好提示。
 
@@ -1930,7 +1930,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：文档可读；与 spec.md Assumptions 章节保持一致。
 
-- [ ] T116 [P] 创建 ConfirmDangerDialog 共用组件 `src/components/common/ConfirmDangerDialog.vue`
+- [x] T116 [P] 创建 ConfirmDangerDialog 共用组件 `src/components/common/ConfirmDangerDialog.vue`
 
   **目标**：spec FR-? + Principle III 删除操作统一 UI。
 

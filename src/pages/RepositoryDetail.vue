@@ -1,37 +1,47 @@
 <!--
-  单仓库工作区页面（T082 三栏骨架）。
+  单仓库工作区页面(US5 完整版,T082 骨架 → T088 接入)。
 
-  布局：
-    顶栏 — 仓库名 / 当前分支 / ahead-behind / 远程 URL / Fetch · Pull · Push
-    左栏 — 文件变更列表（占位，T083 GitFileChanges 替换）
-    中栏 — Diff 查看区（占位，T084 DiffViewer 替换）
-    右栏 — Commit 面板（占位，T085 CommitPanel 替换）
+  布局:
+    顶栏 — 仓库名 / BranchSelector / ahead-behind / 远程 URL / Fetch · Pull · Push
+    左栏 — GitFileChanges 文件变更列表
+    中栏 — DiffViewer + CommitHistory tab 切换
+    右栏 — CommitPanel 提交面板
 
-  说明：
-    本骨架仅承接 T082 验收（路由可达、三栏可见）；列表/Diff/Commit/
-    BranchSelector/CommitHistory 等具体组件由后续任务 T083-T087 实现。
-    页面打开时调用 git_status 拉取一次状态用于顶栏展示。
+  数据流:
+    - 本页集中持有 status / branches / selectedFile / diffResult,作为数据源
+    - 子组件通过 props 接收数据,通过 emit 通知父组件触发 gitApi
+    - 任何写操作(stage / commit / fetch / pull / push / checkout)成功后
+      统一刷新 status 与 branches,确保 UI 实时反映
+
+  T088 错误提示:
+    - pull 失败 → ElMessageBox 警告冲突场景
+    - push 失败 → ElMessageBox 警告 non-fast-forward / no upstream
+    - 错误对象按 GitViewError code 分类提示
 -->
 <template>
   <div class="page-repository-detail">
-    <!-- ============ 顶栏：仓库元信息 + 网络操作按钮 ============ -->
-    <!-- 顶部条带左侧展示仓库标题/分支/同步指标,右侧是 Fetch/Pull/Push 三个网络按钮 -->
+    <!-- ============ 顶栏 ============ -->
+    <!-- 顶部条带左侧:仓库名 / 分支选择器 / ahead-behind / 远端 URL -->
     <header class="repo-header">
-      <!-- 仓库元信息分组：仓库名为 h2 标题,下方是 meta 行 -->
       <div class="repo-summary">
-        <!-- 仓库标题：取本地路径末段作为显示名,避免直接展示完整路径过长 -->
+        <!-- 仓库标题:取本地路径末段 -->
         <h2 class="repo-name">{{ repoLabel }}</h2>
-        <!-- meta 行：分支名 / ahead-behind / 远端 URL 三段并列 -->
         <div class="repo-meta">
-          <!-- 当前分支显示;脏 / detached 时仍会展示原分支名,空时显示破折号 -->
-          <span class="branch">分支：{{ currentBranch || '—' }}</span>
-          <!-- ahead/behind 计数;此处用上下箭头表达"领先/落后远端" -->
+          <!-- 分支选择器组件:脏工作区下自身处理 disable -->
+          <BranchSelector
+            :branches="branches"
+            :current-name="currentBranch"
+            :is-dirty="isDirty"
+            @switch-local="onSwitchLocalBranch"
+            @switch-remote="onSwitchRemoteBranch"
+          />
+          <!-- ahead/behind 计数 -->
           <span class="ahead-behind">↑ {{ status?.ahead ?? 0 }} / ↓ {{ status?.behind ?? 0 }}</span>
-          <!-- 远端 URL;鼠标 hover 工具提示展示完整地址,文本过长则截断 -->
+          <!-- 远端 URL -->
           <span class="remote" :title="remoteUrl">{{ remoteUrl || '无远端' }}</span>
         </div>
       </div>
-      <!-- 网络操作按钮组：使用 loading 互斥控制,避免并发触发同类 git 网络命令 -->
+      <!-- 网络操作按钮组:互斥控制避免并发 -->
       <div class="repo-actions">
         <el-button :loading="busyAction === 'fetch'" @click="runFetch">Fetch</el-button>
         <el-button :loading="busyAction === 'pull'" @click="runPull">Pull</el-button>
@@ -39,233 +49,474 @@
       </div>
     </header>
 
-    <!-- ============ 主体三栏：变更列表 / Diff / Commit ============ -->
-    <!-- 三栏使用 Grid 布局,后续 T083-T085 会把 placeholder 替换为真实组件 -->
+    <!-- ============ 主体三栏 ============ -->
     <section class="repo-body">
-      <!-- 左栏：文件变更列表占位 (T083 GitFileChanges 接入点) -->
+      <!-- 左栏:文件变更列表 -->
       <aside class="col col-changes">
-        <!-- 栏标题：显式标记列功能,便于后续组件迁移时定位 -->
-        <h3 class="col-title">变更</h3>
-        <div class="placeholder">
-          <p>共 {{ status?.changes.length ?? 0 }} 个变更</p>
-          <p class="hint">GitFileChanges 组件将在 T083 实现</p>
+        <GitFileChanges
+          v-if="status"
+          :changes="status.changes"
+          @stage-file="onStageFile"
+          @unstage-file="onUnstageFile"
+          @stage-all="onStageAll"
+          @unstage-all="onUnstageAll"
+          @discard-confirmed="onDiscardConfirmed"
+        />
+        <div v-else class="placeholder">{{ loadError || '加载中...' }}</div>
+        <!-- 文件单击切换 stage,行内"暂存"/"丢弃"按钮已在 GitFileChanges 内部触发事件 -->
+        <!-- 选中文件状态:在变更列表下方提示当前查看的 diff 文件 -->
+        <div v-if="selectedFile" class="selected-file">
+          当前查看:<span class="mono">{{ selectedFile }}</span>
         </div>
       </aside>
 
-      <!-- 中栏：Diff 查看区占位 (T084 DiffViewer 接入点) -->
+      <!-- 中栏:Diff 查看器 + 切换到提交历史 -->
       <main class="col col-diff">
-        <h3 class="col-title">Diff</h3>
-        <div class="placeholder">
-          <p>选择左侧文件后显示统一 diff</p>
-          <p class="hint">DiffViewer 组件将在 T084 实现</p>
-        </div>
+        <!-- 视图切换 tabs:diff vs commit history -->
+        <el-tabs v-model="middleTab" class="middle-tabs">
+          <el-tab-pane label="Diff" name="diff">
+            <DiffViewer :result="diffResult" />
+          </el-tab-pane>
+          <el-tab-pane label="提交历史" name="history">
+            <CommitHistory :repo-id="repoId" />
+          </el-tab-pane>
+        </el-tabs>
       </main>
 
-      <!-- 右栏：Commit 面板占位 (T085 CommitPanel 接入点) -->
+      <!-- 右栏:Commit 面板 -->
       <aside class="col col-commit">
-        <h3 class="col-title">提交</h3>
-        <div class="placeholder">
-          <p>填写 message + description 后提交</p>
-          <p class="hint">CommitPanel 组件将在 T085 实现</p>
-        </div>
+        <CommitPanel
+          ref="commitPanelRef"
+          :staged-count="stagedCount"
+          :submitting="busyAction === 'commit'"
+          @submit="onCommitSubmit"
+        />
       </aside>
     </section>
 
-    <!-- 状态加载提示与错误提示:放页面底部,不遮挡主体 -->
-    <p v-if="loading" class="loading-hint">正在加载仓库状态...</p>
+    <!-- 加载/错误提示放底部,避免遮挡主体 -->
+    <p v-if="loading && !status" class="loading-hint">正在加载仓库状态...</p>
     <p v-if="loadError" class="error-hint">{{ loadError }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
 /**
- * RepositoryDetail 页面脚本（T082）。
- * 职责：
- *   - 读取路由参数 id 作为 LocalRepository.id
- *   - 拉取仓库基本信息（local store）+ 工作区状态（git_status）
- *   - 触发 Fetch / Pull / Push 网络操作，并在错误时给出中文提示
- *   - 子组件挂载点：T083-T087 后续替换 placeholder
+ * RepositoryDetail 完整版(T082 + T083-T088)。
+ *
+ * 数据中枢职责:
+ *   - 拉取 status / branches / diff;
+ *   - 监听文件变更列表事件,调用 gitApi 并刷新数据;
+ *   - 处理 fetch / pull / push 网络操作 + 中文友好错误提示(T088);
+ *   - 处理 commit 流程(包含 5 项前置校验失败时的 Internal 错误提示);
+ *   - 处理 BranchSelector 切换分支 + DirtyWorkdir 错误兜底提示。
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 
-// gitApi：封装 src-tauri/src/commands/git.rs 的 15 个 IPC 命令
+// gitApi:封装 src-tauri/src/commands/git.rs 的 15 个 IPC 命令
 import { gitApi } from '@/api/git.api';
-// localStore：提供已加入 GitView 的本地仓库元信息列表
+// localStore:仓库元信息共享 store
 import { useLocalRepositoryStore } from '@/stores/localRepository';
-// 类型声明：与 Rust 端 GitStatus / LocalRepository 模型一一对应
-import type { GitStatus } from '@/types/git';
+// 子组件挂载
+import GitFileChanges from '@/components/git/GitFileChanges.vue';
+import DiffViewer from '@/components/git/DiffViewer.vue';
+import CommitPanel from '@/components/git/CommitPanel.vue';
+import CommitHistory from '@/components/git/CommitHistory.vue';
+import BranchSelector from '@/components/git/BranchSelector.vue';
+// 类型定义
+import type { Branch, DiffResult, FileChange, GitStatus } from '@/types/git';
 import type { LocalRepository } from '@/types/repository';
 
-// route：取出动态参数 id；store：仓库元信息共享数据源
 const route = useRoute();
 const localStore = useLocalRepositoryStore();
 
-/** 路由参数 id 对应 local_repositories.id。 */
+/** 路由参数 id,对应 local_repositories.id */
 const repoId = computed(() => String(route.params.id ?? ''));
 
-/** 工作区状态（首次进入页面时拉取一次，后续由 fetch/pull/push 后刷新）。 */
+// ============ 数据状态 ============
+/** 工作区聚合状态 */
 const status = ref<GitStatus | null>(null);
-/** 顶栏状态加载中标志，避免重复请求并支撑骨架屏 */
+/** 分支列表(本地 + 远程) */
+const branches = ref<Branch[]>([]);
+/** 当前查看 diff 的文件路径;null 时 DiffViewer 显示提示 */
+const selectedFile = ref<string | null>(null);
+/** Diff 文本结果 */
+const diffResult = ref<DiffResult | null>(null);
+/** 初始加载标志 */
 const loading = ref(false);
-/** 加载失败时记录错误文本，模板内显式展示，避免静默失败 */
-const loadError = ref<string>('');
-/** 当前正在执行的网络操作类型；用于按钮 loading 与互斥控制 */
-const busyAction = ref<'fetch' | 'pull' | 'push' | ''>('');
+/** 加载错误文案,模板显示 */
+const loadError = ref('');
+/** 当前网络/提交操作的类型,用于按钮 loading 与互斥控制 */
+const busyAction = ref<'fetch' | 'pull' | 'push' | 'commit' | ''>('');
+/** 中栏 tab 状态:diff vs 提交历史 */
+const middleTab = ref<'diff' | 'history'>('diff');
+/** CommitPanel ref,提交成功后调用其 reset() 清空输入 */
+const commitPanelRef = ref<InstanceType<typeof CommitPanel> | null>(null);
 
-/** 从 store 中读取当前仓库的基础元信息（路径、远端 URL、本地分支等）。 */
+// ============ 派生计算 ============
+/** 当前仓库的元信息,缺失时显示 id */
 const repoMeta = computed(() =>
   localStore.repositories.find((r: LocalRepository) => r.id === repoId.value),
 );
-// 仓库展示名：取本地路径最后一段，回退到完整路径，再回退到 id
 const repoLabel = computed(
   () => repoMeta.value?.localPath?.split('/').pop() ?? repoMeta.value?.localPath ?? repoId.value,
 );
-// 远端 URL 用于顶栏标题工具提示展示
 const remoteUrl = computed(() => repoMeta.value?.remoteUrl ?? '');
-// 当前分支优先取 status 解析结果，fallback 到 store 缓存的字段
+/** 当前分支:优先 status,fallback 到 store 缓存 */
 const currentBranch = computed(
   () => status.value?.currentBranch ?? repoMeta.value?.currentBranch ?? '',
 );
+/** 是否脏工作区:用于 BranchSelector 阻断 */
+const isDirty = computed(() => !(status.value?.isClean ?? true));
+/** 已暂存文件数:用于 CommitPanel 按钮启用 */
+const stagedCount = computed(
+  () => (status.value?.changes ?? []).filter((c: FileChange) => c.staged).length,
+);
 
-/** 加载仓库状态，统一封装错误展示。 */
-async function loadStatus(): Promise<void> {
-  // 路由尚未注入 id 时跳过，避免对空字符串发起后端请求
+// ============ 数据加载 ============
+
+/** 加载 status + 分支列表,统一处理错误。 */
+async function loadAll(): Promise<void> {
   if (!repoId.value) return;
   loading.value = true;
   loadError.value = '';
   try {
-    status.value = await gitApi.status(repoId.value);
+    // 并发加载 status 与 branches,加快首屏可见时间
+    const [s, b] = await Promise.all([
+      gitApi.status(repoId.value),
+      gitApi.listBranches(repoId.value).catch(() => [] as Branch[]),
+    ]);
+    status.value = s;
+    branches.value = b;
   } catch (e) {
-    // 错误对象可能不是 Error 实例（Tauri 透传的 GitViewClientError），统一转字符串
-    loadError.value = `状态加载失败：${e instanceof Error ? e.message : String(e)}`;
+    loadError.value = `状态加载失败:${formatError(e)}`;
   } finally {
     loading.value = false;
   }
 }
 
-/** 通用网络操作执行器：统一处理 busy 标志、错误展示与状态刷新。 */
-async function runNetworkAction(
-  kind: 'fetch' | 'pull' | 'push',
-  fn: () => Promise<string>,
-): Promise<void> {
-  // 已有操作进行中时直接忽略点击，避免并发触发 git 网络命令
-  if (busyAction.value) return;
-  busyAction.value = kind;
+/** 重新加载 diff,基于当前 selectedFile;cached 行为留待后续按钮切换。 */
+async function reloadDiff(): Promise<void> {
+  if (!selectedFile.value) {
+    diffResult.value = null;
+    return;
+  }
   try {
-    await fn();
-    ElMessage.success(`${kind.toUpperCase()} 成功`);
-    // 成功后重新拉取 status，让 ahead/behind 指标即时反映远端变化
-    await loadStatus();
+    diffResult.value = await gitApi.diff(repoId.value, selectedFile.value, false);
   } catch (e) {
-    // 失败时不阻塞操作（busy 标志在 finally 中清空），让用户能立即重试
-    ElMessage.error(`${kind.toUpperCase()} 失败：${e instanceof Error ? e.message : String(e)}`);
+    diffResult.value = null;
+    ElMessage.error(`Diff 加载失败:${formatError(e)}`);
+  }
+}
+
+// ============ 文件操作 ============
+
+/** stage 单文件:成功后刷新 status 与当前 diff(stage 不改 diff 内容但暂存区会变化) */
+async function onStageFile(path: string): Promise<void> {
+  try {
+    await gitApi.stageFile(repoId.value, path);
+    selectedFile.value = path;
+    await Promise.all([loadAll(), reloadDiff()]);
+  } catch (e) {
+    ElMessage.error(`暂存失败:${formatError(e)}`);
+  }
+}
+
+/** unstage 单文件 */
+async function onUnstageFile(path: string): Promise<void> {
+  try {
+    await gitApi.unstageFile(repoId.value, path);
+    selectedFile.value = path;
+    await Promise.all([loadAll(), reloadDiff()]);
+  } catch (e) {
+    ElMessage.error(`取消暂存失败:${formatError(e)}`);
+  }
+}
+
+/** 全部 stage:对工作区全部变更生效 */
+async function onStageAll(): Promise<void> {
+  try {
+    await gitApi.stageAll(repoId.value);
+    await loadAll();
+  } catch (e) {
+    ElMessage.error(`全部暂存失败:${formatError(e)}`);
+  }
+}
+
+/** 全部 unstage:清空整个暂存区 */
+async function onUnstageAll(): Promise<void> {
+  try {
+    await gitApi.unstageAll(repoId.value);
+    await loadAll();
+  } catch (e) {
+    ElMessage.error(`全部取消暂存失败:${formatError(e)}`);
+  }
+}
+
+/** discard 已通过子组件 ConfirmDangerDialog 二次确认;此处直接调用并刷新 */
+async function onDiscardConfirmed(paths: string[]): Promise<void> {
+  try {
+    await gitApi.discardChanges(repoId.value, paths, true);
+    ElMessage.success(`已丢弃 ${paths.length} 个文件的变更`);
+    await Promise.all([loadAll(), reloadDiff()]);
+  } catch (e) {
+    ElMessage.error(`丢弃失败:${formatError(e)}`);
+  }
+}
+
+// ============ 提交 ============
+
+/** CommitPanel emit('submit') 回调:执行 commit 并刷新 */
+async function onCommitSubmit(payload: { message: string; description?: string }): Promise<void> {
+  if (busyAction.value) return;
+  busyAction.value = 'commit';
+  try {
+    await gitApi.commit(repoId.value, payload.message, payload.description);
+    ElMessage.success('提交成功');
+    commitPanelRef.value?.reset();
+    await loadAll();
+  } catch (e) {
+    // 后端可能返回 Internal(中文阻断原因) 或 GitCommand 等;统一展示给用户
+    ElMessage.error(`提交失败:${formatError(e)}`);
   } finally {
     busyAction.value = '';
   }
 }
 
-// 三个网络操作的薄包装：保留显式命名以便模板里语义清晰
-const runFetch = (): Promise<void> => runNetworkAction('fetch', () => gitApi.fetch(repoId.value));
-const runPull = (): Promise<void> => runNetworkAction('pull', () => gitApi.pull(repoId.value));
-const runPush = (): Promise<void> => runNetworkAction('push', () => gitApi.push(repoId.value));
+// ============ 网络操作 + T088 错误提示 ============
+
+/** 通用执行器:Fetch / Pull / Push */
+async function runNetwork(kind: 'fetch' | 'pull' | 'push'): Promise<void> {
+  if (busyAction.value) return;
+  busyAction.value = kind;
+  try {
+    if (kind === 'fetch') await gitApi.fetch(repoId.value);
+    else if (kind === 'pull') await gitApi.pull(repoId.value);
+    else await gitApi.push(repoId.value);
+    ElMessage.success(`${kind.toUpperCase()} 成功`);
+    await loadAll();
+  } catch (e) {
+    // T088:Pull/Push 失败按场景给中文友好提示
+    handleNetworkError(kind, e);
+  } finally {
+    busyAction.value = '';
+  }
+}
+const runFetch = (): Promise<void> => runNetwork('fetch');
+const runPull = (): Promise<void> => runNetwork('pull');
+const runPush = (): Promise<void> => runNetwork('push');
+
+/** T088:网络错误的中文友好提示,基于错误信息关键词分类。 */
+function handleNetworkError(kind: 'fetch' | 'pull' | 'push', e: unknown): void {
+  const msg = formatError(e);
+  const lower = msg.toLowerCase();
+  // Pull:冲突场景需要外部工具解决
+  if (kind === 'pull' && lower.includes('冲突')) {
+    void ElMessageBox.alert(
+      'Pull 后存在冲突,请使用外部工具(如 VS Code 或 git mergetool)解决冲突后再提交。',
+      'Pull 冲突',
+      { confirmButtonText: '我知道了', type: 'warning' },
+    );
+    return;
+  }
+  // Pull:分叉无法快进
+  if (kind === 'pull' && (lower.includes('分叉') || lower.includes('fast-forward'))) {
+    void ElMessageBox.alert(
+      '本地与远程分支已分叉,无法快进合并。请使用外部工具解决冲突后再继续。',
+      'Pull 失败',
+      { confirmButtonText: '我知道了', type: 'warning' },
+    );
+    return;
+  }
+  // Push:被拒绝(non-fast-forward)
+  if (kind === 'push' && (lower.includes('被拒绝') || lower.includes('rejected'))) {
+    void ElMessageBox.alert(
+      '推送被拒绝(远程有新提交),请先 Pull 远程更新后再推送。',
+      'Push 被拒绝',
+      { confirmButtonText: '我知道了', type: 'warning' },
+    );
+    return;
+  }
+  // Push:缺少 upstream
+  if (kind === 'push' && lower.includes('upstream')) {
+    void ElMessageBox.alert(
+      '当前分支没有 upstream,请运行 git push -u origin <branch> 设置后再推送。',
+      'Push 失败',
+      { confirmButtonText: '我知道了', type: 'warning' },
+    );
+    return;
+  }
+  // 兜底:普通 toast
+  ElMessage.error(`${kind.toUpperCase()} 失败:${msg}`);
+}
+
+// ============ 分支切换 ============
+
+/** 切换本地分支:DirtyWorkdir 时按钮已被 BranchSelector disable,这里兜底处理后端返回。 */
+async function onSwitchLocalBranch(name: string): Promise<void> {
+  try {
+    await gitApi.checkoutBranch(repoId.value, name);
+    ElMessage.success(`已切换到 ${name}`);
+    await loadAll();
+  } catch (e) {
+    const msg = formatError(e);
+    if (msg.includes('未提交变更')) {
+      ElMessage.warning('存在未提交变更,请先提交或暂存后再切换分支');
+    } else {
+      ElMessage.error(`切换分支失败:${msg}`);
+    }
+  }
+}
+
+/** 从远程分支 checkout 出新本地分支(自动 upstream):remoteName 如 origin/feature-x */
+async function onSwitchRemoteBranch(remoteName: string): Promise<void> {
+  // 去掉 origin/ 前缀作为新本地分支名;若用户名不合法 git 会自报错
+  const localName = remoteName.replace(/^origin\//, '').replace(/^remotes\/[^/]+\//, '');
+  try {
+    await gitApi.createBranch(repoId.value, localName, true);
+    ElMessage.success(`已从 ${remoteName} 创建本地分支 ${localName}`);
+    await loadAll();
+  } catch (e) {
+    ElMessage.error(`创建本地分支失败:${formatError(e)}`);
+  }
+}
+
+// ============ 工具函数 ============
+
+/** 错误对象规范化为字符串,兼容 Error / GitViewClientError / 任意 */
+function formatError(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
+// ============ 生命周期 ============
 
 onMounted(() => {
-  // 若本地仓库 store 尚未加载，先拉一次列表以拿到当前仓库的元信息
   if (localStore.repositories.length === 0) {
     void localStore.fetchAll();
   }
-  // 不等 store 加载结果即可发起 status 请求；二者互不依赖，并行更快
-  void loadStatus();
+  void loadAll();
+});
+
+/** repoId 变化时重置选中文件并重新加载 */
+watch(repoId, () => {
+  selectedFile.value = null;
+  diffResult.value = null;
+  void loadAll();
+});
+
+/** 当 selectedFile 变化时自动加载 diff */
+watch(selectedFile, () => {
+  void reloadDiff();
 });
 </script>
 
 <style scoped>
-/* ===== 整体页面：纵向排布顶栏 + 主体 ===== */
-/* 使用 flex column 让顶栏自适应高度，主体 flex:1 填满剩余空间 */
+/* ===== 整体页面:纵向排布顶栏 + 主体 ===== */
 .page-repository-detail {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding: 8px;
-  gap: 8px;
+  display: flex; /* flex 用于纵向布局 */
+  flex-direction: column; /* 顶栏在上,主体在下 */
+  height: 100%; /* 占满父高 */
+  padding: 8px; /* 页面四周留白 */
+  gap: 8px; /* 顶栏与主体间隔 */
 }
 
-/* ===== 顶栏：仓库元信息 + 网络操作按钮 ===== */
-/* 横向布局：左侧元信息靠左，右侧按钮组靠右 */
+/* ===== 顶栏 ===== */
 .repo-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--el-bg-color-page);
-  border-radius: 4px;
+  display: flex; /* 横排:左信息 + 右按钮 */
+  align-items: center; /* 垂直居中 */
+  justify-content: space-between; /* 两端对齐 */
+  padding: 8px 12px; /* 内边距 */
+  background: var(--el-bg-color-page); /* 浅背景区分 */
+  border-radius: 4px; /* 圆角 */
 }
-/* 仓库名：较大字号、加粗效果由 h2 自带 */
 .repo-name {
-  font-size: 16px;
-  margin: 0 0 4px 0;
+  font-size: 16px; /* 标题字号 */
+  margin: 0 0 4px 0; /* 与 meta 行留间距 */
 }
-/* 元信息行：分支、ahead/behind、远端 URL 用 gap 间隔 */
 .repo-meta {
-  display: flex;
-  gap: 16px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+  display: flex; /* 横排各段元信息 */
+  gap: 16px; /* 段间距 */
+  align-items: center; /* 垂直居中 */
+  font-size: 13px; /* 元信息字号 */
+  color: var(--el-text-color-secondary); /* 次色 */
 }
-/* 远端 URL 较长时截断显示，hover 通过 title 属性看完整 */
 .repo-meta .remote {
-  max-width: 280px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: 280px; /* 限宽避免挤压其他元素 */
+  white-space: nowrap; /* 不换行 */
+  overflow: hidden; /* 溢出隐藏 */
+  text-overflow: ellipsis; /* 末尾省略号 */
 }
 
-/* ===== 三栏主体：使用 CSS Grid，左中右比例 1:2:1 ===== */
-/* min-height:0 让 Grid 子元素允许 overflow 滚动 */
+/* ===== 三栏主体 ===== */
 .repo-body {
-  display: grid;
-  grid-template-columns: 1fr 2fr 1fr;
-  gap: 8px;
-  flex: 1;
-  min-height: 0;
+  display: grid; /* Grid 实现 1:2:1 三栏 */
+  grid-template-columns: 1fr 2fr 1fr; /* 中栏更宽承载 diff */
+  gap: 8px; /* 列间距 */
+  flex: 1; /* 占据剩余空间 */
+  min-height: 0; /* 允许 Grid 子元素 overflow */
 }
-/* 单栏容器：内部独立滚动，背景色与顶栏一致形成视觉分组 */
+/* 单栏:背景与内边距统一 */
 .col {
-  display: flex;
-  flex-direction: column;
-  background: var(--el-bg-color-page);
-  border-radius: 4px;
-  padding: 8px;
-  overflow: auto;
-}
-/* 栏标题：紧贴顶部、字号小于页面标题以建立信息层级 */
-.col-title {
-  margin: 0 0 8px 0;
-  font-size: 14px;
-  color: var(--el-text-color-primary);
-}
-/* 占位文案：次要颜色，避免与未来真实数据产生视觉冲突 */
-.placeholder {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-/* 占位 hint 行：斜体提示后续 Phase 实现，便于设计师与开发对齐进度 */
-.placeholder .hint {
-  margin-top: 4px;
-  font-style: italic;
-  color: var(--el-text-color-placeholder);
+  display: flex; /* 纵向布局 */
+  flex-direction: column; /* 子元素上下堆叠 */
+  background: var(--el-bg-color-page); /* 浅背景区分 */
+  border-radius: 4px; /* 圆角 */
+  padding: 8px; /* 栏内边距 */
+  overflow: hidden; /* 隐藏溢出,内部自滚动 */
+  min-height: 0; /* 允许 flex 子元素滚动 */
 }
 
-/* ===== 加载与错误提示：放在主体下方而非 overlay，避免遮挡数据 ===== */
-.loading-hint {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
+/* 中栏 tabs 占满整个栏高 */
+.middle-tabs {
+  flex: 1; /* 占满父栏 */
+  display: flex; /* flex 用于嵌套 */
+  flex-direction: column; /* 上为 tab header,下为内容 */
+  min-height: 0; /* 允许内部滚动 */
 }
-/* 错误用主题红色，区别于加载提示 */
+.middle-tabs :deep(.el-tabs__content) {
+  flex: 1; /* 内容区占满 */
+  min-height: 0; /* 允许滚动 */
+  overflow: auto; /* 自动滚动 */
+}
+.middle-tabs :deep(.el-tab-pane) {
+  height: 100%; /* tab 内容占满 */
+}
+
+/* 当前查看文件提示:左栏底部 */
+.selected-file {
+  font-size: 12px; /* 小字提示 */
+  color: var(--el-text-color-secondary); /* 次色 */
+  padding: 4px 0; /* 上下间距 */
+  border-top: 1px solid var(--el-border-color-lighter); /* 顶部分割线 */
+  margin-top: 4px; /* 与列表留间距 */
+}
+.mono {
+  font-family: var(--el-font-family-mono, monospace); /* 等宽路径 */
+}
+
+/* 占位文案 */
+.placeholder {
+  color: var(--el-text-color-secondary); /* 次色 */
+  font-size: 13px; /* 提示字号 */
+  text-align: center; /* 居中 */
+  padding: 16px; /* 留白 */
+}
+
+/* 底部加载/错误提示 */
+.loading-hint {
+  color: var(--el-text-color-secondary); /* 次色 */
+  font-size: 12px; /* 小字 */
+}
 .error-hint {
-  color: var(--el-color-danger);
-  font-size: 13px;
+  color: var(--el-color-danger); /* 危险红 */
+  font-size: 13px; /* 略大字号便于读 */
 }
 </style>
