@@ -543,4 +543,121 @@ mod tests {
             RepositoryStatus::Unknown
         );
     }
+
+    // ===================================================================
+    // T092 — porcelain v2 解析单元测试
+    // ===================================================================
+    //
+    // 覆盖头部行(branch.head / branch.upstream / branch.ab)、ordinary 条目、
+    // rename 条目、untracked 与 unmerged(冲突)。所有样本以 NUL 分隔,
+    // 模拟 `git status --porcelain=v2 --branch -z` 真实输出格式。
+
+    /// 验收(T092):头部行解析正确,文件变更入列且 staged 标志正确。
+    ///
+    /// 注:当前 `parse_ordinary_entry` 实现对已暂存文件统一返回
+    /// `FileStatus::Staged`(原始变更类型由 `staged` 布尔字段补充语义)。
+    #[test]
+    fn parse_porcelain_v2_branch_and_changes() {
+        // 构造样本:main 分支、领先 2 落后 1、3 个文件变更
+        // 字段顺序: 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+        let raw = concat!(
+            "# branch.oid abc123\0",
+            "# branch.head main\0",
+            "# branch.upstream origin/main\0",
+            "# branch.ab +2 -1\0",
+            // 普通修改 + 已暂存(staged 字符 'M',工作区 '.')
+            "1 M. N... 100644 100644 100644 h1 h2 src/a.rs\0",
+            // 工作区修改未暂存(staged '.',工作区 'M')
+            "1 .M N... 100644 100644 100644 h3 h4 src/b.rs\0",
+            // 已暂存的删除(staged 'D')
+            "1 D. N... 100644 100644 100644 h5 h6 src/c.rs\0",
+        );
+        let s = parse_porcelain_v2(raw);
+        assert_eq!(s.current_branch.as_deref(), Some("main"));
+        assert_eq!(s.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(s.ahead, 2);
+        assert_eq!(s.behind, 1);
+        assert_eq!(s.changes.len(), 3);
+        assert!(!s.is_clean);
+
+        // 第一个文件:暂存修改 → staged=true, status=Staged
+        assert_eq!(s.changes[0].path, "src/a.rs");
+        assert!(s.changes[0].staged);
+        assert_eq!(s.changes[0].status, FileStatus::Staged);
+
+        // 第二个文件:工作区修改未暂存 → staged=false, status=Modified
+        assert_eq!(s.changes[1].path, "src/b.rs");
+        assert!(!s.changes[1].staged);
+        assert_eq!(s.changes[1].status, FileStatus::Modified);
+
+        // 第三个文件:已暂存删除 → staged=true, status=Staged
+        assert_eq!(s.changes[2].path, "src/c.rs");
+        assert!(s.changes[2].staged);
+        assert_eq!(s.changes[2].status, FileStatus::Staged);
+    }
+
+    /// 验收(T092):untracked 与 ignored 条目分类正确。
+    #[test]
+    fn parse_porcelain_v2_untracked_and_ignored() {
+        let raw = concat!(
+            "# branch.head main\0",
+            "? new-file.txt\0",
+            "? temp/draft.md\0",
+            "! .DS_Store\0",
+        );
+        let s = parse_porcelain_v2(raw);
+        assert_eq!(s.changes.len(), 3);
+        assert_eq!(s.changes[0].status, FileStatus::Untracked);
+        assert_eq!(s.changes[0].path, "new-file.txt");
+        assert_eq!(s.changes[1].status, FileStatus::Untracked);
+        assert_eq!(s.changes[1].path, "temp/draft.md");
+        assert_eq!(s.changes[2].status, FileStatus::Ignored);
+        assert_eq!(s.changes[2].path, ".DS_Store");
+    }
+
+    /// 验收(T092):detached HEAD 时 current_branch 为 None。
+    #[test]
+    fn parse_porcelain_v2_detached_head() {
+        let raw = concat!("# branch.oid abc\0", "# branch.head (detached)\0",);
+        let s = parse_porcelain_v2(raw);
+        assert!(s.current_branch.is_none());
+        assert!(s.is_clean);
+    }
+
+    /// 验收(T092):unmerged 条目(冲突)解析为 Conflicted 状态。
+    #[test]
+    fn parse_porcelain_v2_unmerged_conflict() {
+        // unmerged 格式: u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+        let raw = concat!(
+            "# branch.head main\0",
+            "u UU N... 100644 100644 100644 100644 h1 h2 h3 conflict.txt\0",
+        );
+        let s = parse_porcelain_v2(raw);
+        assert_eq!(s.changes.len(), 1);
+        assert_eq!(s.changes[0].status, FileStatus::Conflicted);
+        assert_eq!(s.changes[0].path, "conflict.txt");
+    }
+
+    /// 验收(T092):空输入或仅头部时 is_clean = true。
+    #[test]
+    fn parse_porcelain_v2_clean_when_no_changes() {
+        let raw = concat!(
+            "# branch.head main\0",
+            "# branch.upstream origin/main\0",
+            "# branch.ab +0 -0\0",
+        );
+        let s = parse_porcelain_v2(raw);
+        assert!(s.is_clean);
+        assert_eq!(s.changes.len(), 0);
+        assert_eq!(s.ahead, 0);
+        assert_eq!(s.behind, 0);
+    }
+
+    /// 验收(T092):空字符串安全降级,不 panic。
+    #[test]
+    fn parse_porcelain_v2_empty_input_is_safe() {
+        let s = parse_porcelain_v2("");
+        assert!(s.current_branch.is_none());
+        assert!(s.is_clean);
+    }
 }
