@@ -1545,7 +1545,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：跳转后 RepositoryDetail.vue 自动加载该仓库数据。
 
-- [ ] T090 [US5] [T] 编写 commit 临时文件提交单元测试
+- [x] T090 [US5] [T] 编写 commit 临时文件提交单元测试
 
   **目标**：验证多行 message 与中文字符正确提交。
 
@@ -1554,7 +1554,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：内容一致。
 
-- [ ] T091 [US5] [T] 编写 commit 前置校验单元测试
+- [x] T091 [US5] [T] 编写 commit 前置校验单元测试
 
   **目标**：覆盖 5 项校验。
 
@@ -1562,7 +1562,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：每项校验通过。
 
-- [ ] T092 [US5] [T] 编写 git status 解析单元测试
+- [x] T092 [US5] [T] 编写 git status 解析单元测试
 
   **目标**：验证 porcelain v2 解析。
 
