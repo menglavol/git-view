@@ -225,6 +225,10 @@ pub fn run() {
             commands::git::git_checkout_branch,
             commands::git::git_create_branch,
             commands::git::git_discard_changes,
+            // US6 操作日志
+            commands::logs::list_operation_logs,
+            commands::logs::get_operation_log_detail,
+            commands::logs::clear_old_operation_logs,
         ])
         .run(tauri::generate_context!())
         .expect("启动 GitView 应用失败：Tauri Builder.run() 异常");

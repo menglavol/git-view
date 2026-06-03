@@ -22,11 +22,14 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 use tauri::State;
 
 use crate::errors::{GitViewError, Result};
+use crate::models::operation_log::{OperationStatus, OperationType};
 use crate::models::repository::LocalRepository;
+use crate::services::log_service;
 use crate::services::repository_service::{self, BatchFetchSummary};
 use crate::AppState;
 
@@ -55,8 +58,36 @@ pub async fn scan_local_repositories(
     root: String,
     max_depth: Option<usize>,
 ) -> Result<Vec<LocalRepository>> {
+    // 未显式指定深度时默认下钻 5 层：足以覆盖 ~/Projects/<group>/<repo> 这类常见嵌套，
+    // 又能避免在超深目录树上无谓地长时间扫描
     let depth = max_depth.unwrap_or(5);
-    repository_service::scan_local_repositories(&state.db, Path::new(&root), depth).await
+    let start = Instant::now();
+    let result =
+        repository_service::scan_local_repositories(&state.db, Path::new(&root), depth).await;
+    // 操作耗时远不会溢出 u64，截断分支不可达
+    #[allow(clippy::cast_possible_truncation)]
+    let duration_ms = start.elapsed().as_millis() as u64;
+    // 扫描结果转为日志状态：成功记识别到的仓库数量，失败记脱敏后的错误原因
+    let (status, output, err) = match &result {
+        Ok(repos) => (
+            OperationStatus::Success,
+            Some(format!("识别 {} 个仓库", repos.len())),
+            None,
+        ),
+        Err(e) => (OperationStatus::Failed, None, Some(e.to_string())),
+    };
+    // 扫描通常较慢，记一条带耗时的日志供性能回溯
+    let _ = log_service::record_operation(
+        &state.db,
+        OperationType::ScanRepos,
+        &root,
+        status,
+        Some("scan"),
+        output.as_deref(),
+        err.as_deref(),
+        duration_ms,
+    );
+    result
 }
 
 /// 查询所有本地仓库。
@@ -96,7 +127,28 @@ pub async fn batch_fetch_repositories(
     state: State<'_, AppState>,
     ids: Vec<String>,
 ) -> Result<BatchFetchSummary> {
-    repository_service::batch_fetch(&state.db, ids).await
+    // 先记录请求数量：ids 会被 batch_fetch 消费（move），其后无法再取长度
+    let count = ids.len();
+    let start = Instant::now();
+    // 单仓库失败不阻塞其他仓库，逐仓成败汇总在 BatchFetchSummary 中返回
+    let result = repository_service::batch_fetch(&state.db, ids).await;
+    #[allow(clippy::cast_possible_truncation)]
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let (status, err) = match &result {
+        Ok(_) => (OperationStatus::Success, None),
+        Err(e) => (OperationStatus::Failed, Some(e.to_string())),
+    };
+    let _ = log_service::record_operation(
+        &state.db,
+        OperationType::Fetch,
+        "批量 Fetch",
+        status,
+        Some("git fetch --all --prune"),
+        Some(&format!("{count} 个仓库")),
+        err.as_deref(),
+        duration_ms,
+    );
+    result
 }
 
 // =====================================================================

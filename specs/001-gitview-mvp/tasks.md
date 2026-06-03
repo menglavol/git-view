@@ -1585,7 +1585,7 @@ commit message 提交成功；执行 push 远程更新。
 **Independent Test**: 触发多种 Git 操作后日志列表可见；故意触发认证失败，日志
 中无 Token；常见错误显示中文翻译。
 
-- [ ] T093 [P] [US6] 实现操作日志 service `src-tauri/src/services/log_service.rs`
+- [x] T093 [P] [US6] 实现操作日志 service `src-tauri/src/services/log_service.rs`
 
   **目标**：记录、查询、清理操作日志，包含敏感信息脱敏。
 
@@ -1602,7 +1602,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：单元测试覆盖：记录、脱敏、查询、翻译。
 
-- [ ] T094 [US6] 实现错误翻译映射表 `src-tauri/src/services/log_service.rs`（内部表）
+- [x] T094 [US6] 实现错误翻译映射表 `src-tauri/src/services/log_service.rs`（内部表）
 
   **目标**：spec FR-048 中文友好提示。
 
@@ -1623,7 +1623,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：单元测试覆盖每条翻译命中。
 
-- [ ] T095 [US6] 集成日志记录到现有 services
+- [x] T095 [US6] 集成日志记录到现有 services
 
   **目标**：在 account / clone / repository / git 各 service 的关键操作处
   调用 `log_service::record`。
@@ -1638,7 +1638,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：触发各类操作后日志表均有对应行；token 被脱敏。
 
-- [ ] T096 [US6] 实现日志相关 Tauri commands `src-tauri/src/commands/logs.rs`
+- [x] T096 [US6] 实现日志相关 Tauri commands `src-tauri/src/commands/logs.rs`
 
   **目标**：`list_operation_logs`、`get_operation_log_detail`、
   `clear_old_operation_logs`。
@@ -1648,7 +1648,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：3 个命令均注册并可调用。
 
-- [ ] T097 [P] [US6] 创建前端日志 API、store、页面
+- [x] T097 [P] [US6] 创建前端日志 API、store、页面
 
   **目标**：`src/api/logs.api.ts`、`src/pages/Logs.vue`、日志详情对话框。
 
@@ -1661,7 +1661,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：与设计文档 §15 一致；10000 条日志虚拟滚动可用。
 
-- [ ] T098 [US6] [T] 编写敏感信息脱敏端到端测试 `tests/integration/log_redaction_test.rs`
+- [x] T098 [US6] [T] 编写敏感信息脱敏端到端测试 `tests/integration/log_redaction_test.rs`
 
   **目标**：触发若干带 token 的操作后扫描 operation_logs 表无 token 明文。
 

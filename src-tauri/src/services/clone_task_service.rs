@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
@@ -23,10 +24,12 @@ use crate::db::pool::DbPool;
 use crate::errors::{GitViewError, Result};
 use crate::models::account::GitPlatform;
 use crate::models::clone_task::{CloneTask, CloneTaskStatus};
+use crate::models::operation_log::{OperationStatus, OperationType};
 use crate::models::repository::RemoteRepository;
 use crate::models::settings::DirectoryStrategy;
 use crate::services::credential_service;
 use crate::services::git_cli_service::{CloneProgressEvent, CredentialInjection, GitCliService};
+use crate::services::log_service;
 use crate::services::repository_service;
 use crate::utils::path::ensure_dir_exists;
 use crate::utils::redact::redact_token;
@@ -298,6 +301,7 @@ async fn run_one_task<R: tauri::Runtime>(
         );
     };
 
+    let start = Instant::now();
     let clone_result = manager
         .git
         .clone_repository(
@@ -309,10 +313,24 @@ async fn run_one_task<R: tauri::Runtime>(
         )
         .await;
 
+    // US6：记录 clone 操作日志（耗时为 clone 调用的近似时长）
+    #[allow(clippy::cast_possible_truncation)]
+    let duration_ms = start.elapsed().as_millis() as u64;
+
     match clone_result {
         Ok(()) => {
             let _ = update_status(&pool, &task_id, CloneTaskStatus::Completed, Some(100), None);
             emit_status(&app, &task_id, CloneTaskStatus::Completed, 100, None);
+            let _ = log_service::record_operation(
+                &pool,
+                OperationType::Clone,
+                &task.repository_name,
+                OperationStatus::Success,
+                Some("git clone"),
+                None,
+                None,
+                duration_ms,
+            );
 
             if auto_add_to_local {
                 if let Err(e) = add_to_local_repositories(&pool, &task) {
@@ -323,6 +341,16 @@ async fn run_one_task<R: tauri::Runtime>(
         Err(GitViewError::UserCancelled) => {
             let _ = update_status(&pool, &task_id, CloneTaskStatus::Cancelled, None, None);
             emit_status(&app, &task_id, CloneTaskStatus::Cancelled, 0, None);
+            let _ = log_service::record_operation(
+                &pool,
+                OperationType::Clone,
+                &task.repository_name,
+                OperationStatus::Cancelled,
+                Some("git clone"),
+                None,
+                None,
+                duration_ms,
+            );
         }
         Err(e) => {
             let safe_msg = redact_token(&e.to_string());
@@ -334,6 +362,16 @@ async fn run_one_task<R: tauri::Runtime>(
                 Some(&safe_msg),
             );
             emit_status(&app, &task_id, CloneTaskStatus::Failed, 0, Some(&safe_msg));
+            let _ = log_service::record_operation(
+                &pool,
+                OperationType::Clone,
+                &task.repository_name,
+                OperationStatus::Failed,
+                Some("git clone"),
+                None,
+                Some(&safe_msg),
+                duration_ms,
+            );
         }
     }
 

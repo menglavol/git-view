@@ -36,6 +36,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "002_extend_account_and_gitlab",
         sql: include_str!("migrations/002_extend_account_and_gitlab.sql"),
     },
+    Migration {
+        version: 3,
+        name: "003_extend_operation_logs",
+        sql: include_str!("migrations/003_extend_operation_logs.sql"),
+    },
 ];
 
 /// 在指定连接池上运行所有未应用的迁移。
@@ -207,5 +212,35 @@ mod tests {
         });
 
         assert!(result.is_err(), "外键约束应阻止悬空 account_id");
+    }
+
+    /// migration 003 后 operation_logs 应包含 command 与 output 两列
+    #[test]
+    fn operation_logs_has_detail_columns() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let pool = DbPool::new(tmp.path()).unwrap();
+        run_pending_migrations(&pool).unwrap();
+
+        pool.with_conn(|conn| {
+            // PRAGMA table_info 第 2 列（索引 1）为列名
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(operation_logs)")
+                .map_err(|e| GitViewError::Database(e.to_string()))?;
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| GitViewError::Database(e.to_string()))?
+                .filter_map(std::result::Result::ok)
+                .collect();
+            assert!(
+                cols.contains(&"command".to_string()),
+                "operation_logs 应含 command 列"
+            );
+            assert!(
+                cols.contains(&"output".to_string()),
+                "operation_logs 应含 output 列"
+            );
+            Ok(())
+        })
+        .unwrap();
     }
 }

@@ -6,9 +6,11 @@
 //!   - `clone_tasks`          — 批量 Clone 任务调度
 //!   - `local_repositories`   — 本地仓库集中管理（US4）
 //!   - `git`                  — 单仓库 Git 工作流（US5：15 个命令）
+//!   - `logs`                 — 操作日志与诊断（US6：3 个命令）
 
 pub mod accounts;
 pub mod clone_tasks;
 pub mod git;
 pub mod local_repositories;
+pub mod logs;
 pub mod remote_repositories;
