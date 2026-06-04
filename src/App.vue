@@ -11,8 +11,23 @@
 </template>
 
 <script setup lang="ts">
-// 根组件目前无业务逻辑；保留 script setup 块以便未来挂接全局事件监听。
-// 后续可能在此处监听 Tauri 窗口事件（如关闭前确认、深度链接等）。
+// 根组件在启动时加载一次持久化设置，并由 settings store 应用主题/语言副作用。
+// 为何放在这里：主题与语言是全局外观，必须在任意页面渲染前就从持久化设置恢复；
+// 否则应用每次都以默认（auto 主题 / 中文）启动，用户选过的深色主题要等进入设置页
+// 才生效，违背 US7「设置重启后保持」的验收标准。这是根组件唯一允许的全局副作用。
+import { onMounted } from 'vue';
+
+import { useSettingsStore } from '@/stores/settings';
+
+const settingsStore = useSettingsStore();
+
+onMounted(() => {
+  // 加载失败（如后端尚未就绪 / keyring 异常）时静默回退默认外观，不阻断应用渲染；
+  // 用户进入设置页可手动重试。这里刻意吞掉错误，避免首屏因设置加载失败而白屏。
+  void settingsStore.load().catch(() => {
+    // 忽略：首屏沿用默认主题/语言
+  });
+});
 </script>
 
 <style>

@@ -1,0 +1,137 @@
+// =====================================================================
+// 简体中文文案（settings.* / common.*）
+// 仅供 Settings.vue 子树使用。结构需与 en.ts 保持一致，
+// 以便 vue-i18n 以此为 schema 校验另一语言的缺漏。
+// =====================================================================
+
+export const zh = {
+  // 通用文案：跨多个表单复用的按钮 / 状态词
+  common: {
+    save: '保存', // 设置页右上角主按钮
+    saving: '保存中…', // 保存请求进行中的按钮态
+    cancel: '取消', // 对话框取消按钮
+    reset: '重置', // 丢弃未保存改动
+    confirm: '确认', // 通用确认
+    seconds: '秒', // 超时输入框后缀单位
+    browse: '浏览', // 目录/文件选择按钮
+  },
+  settings: {
+    // 页面级文案：标题与保存 / 加载结果提示
+    title: '设置', // 侧边栏菜单项 + 页面主标题
+    saveSuccess: '设置已保存', // 保存成功 toast
+    saveFailed: '保存失败', // 保存失败 toast 前缀
+    loadFailed: '加载设置失败', // 加载失败 toast 前缀
+    // 五个 Tab 的标签
+    tabs: {
+      general: '通用',
+      git: 'Git',
+      network: '网络',
+      externalTools: '外部工具',
+      accountSecurity: '账号与安全',
+    },
+    // 通用 Tab 各字段标签
+    general: {
+      repoBaseDir: '默认仓库根目录',
+      repoBaseDirPlaceholder: '批量克隆时预填的根目录',
+      cloneProtocol: '默认克隆协议',
+      concurrency: '默认并发克隆数',
+      concurrencyHint: '改动需重启应用后生效',
+      directoryStrategy: '目录组织方式',
+      theme: '主题',
+      language: '语言',
+      openLastRepo: '启动时打开上次的仓库',
+      autoCheckStatus: '启动时自动检查仓库状态',
+    },
+    // 克隆协议选项
+    protocol: {
+      https: 'HTTPS',
+      ssh: 'SSH',
+    },
+    // 目录组织方式选项
+    strategy: {
+      flat: '扁平（根目录/仓库名）',
+      byOwner: '按所有者（根目录/owner/仓库名）',
+      byPlatformAndOwner: '按平台与所有者（根目录/平台/owner/仓库名）',
+    },
+    // 主题选项
+    theme: {
+      auto: '跟随系统',
+      light: '浅色',
+      dark: '深色',
+    },
+    // 语言选项
+    language: {
+      zhCn: '简体中文',
+      enUs: 'English',
+    },
+    // Git Tab 各字段标签
+    git: {
+      executablePath: 'Git 可执行文件路径',
+      executablePathPlaceholder: '留空则自动从 PATH 探测',
+      detect: '检测 Git',
+      detecting: '检测中…',
+      detected: '已检测到',
+      notDetected: '未检测到可用的 Git',
+      version: '版本',
+      userName: '提交身份 user.name',
+      userEmail: '提交身份 user.email',
+      pullStrategy: '默认 Pull 策略',
+      pushStrategy: '默认 Push 策略',
+    },
+    // Pull 策略选项
+    pull: {
+      ffOnly: '仅快进（--ff-only）',
+      rebase: '变基（--rebase）',
+      merge: '合并（允许 merge commit）',
+    },
+    // Push 策略选项
+    push: {
+      simple: 'simple（仅当前分支到同名上游）',
+      current: 'current（当前分支到同名远端）',
+      upstream: 'upstream（推送到已配置上游）',
+    },
+    // 网络 Tab 各字段标签
+    network: {
+      httpProxy: 'HTTP 代理',
+      httpsProxy: 'HTTPS 代理',
+      proxyPlaceholder: '如 http://127.0.0.1:7890',
+      useSystemProxy: '跟随系统代理',
+      useSystemProxyHint: '开启后忽略上面手填的代理地址',
+      apiTimeout: 'API 请求超时',
+      cloneTimeout: '克隆超时',
+    },
+    // 外部工具 Tab 各字段标签
+    externalTools: {
+      editor: '默认编辑器命令',
+      editorPlaceholder: '如 code、cursor',
+      terminal: '默认终端命令',
+      fileManager: '默认文件管理器命令',
+    },
+    // 账号与安全 Tab：凭据状态与重新验证 / 删除凭据流程
+    security: {
+      description: '此处仅显示凭据是否存在，绝不显示 Token 明文。', // Tab 顶部安全声明
+      noAccounts: '暂无账号，请先在「账号管理」添加。', // 无账号空态
+      columnAccount: '账号',
+      columnPlatform: '平台',
+      columnCredential: '凭据状态',
+      columnActions: '操作',
+      credStored: '已存储', // 绿色 Tag：keyring 中存在凭据
+      credMissing: '凭据缺失', // 红色 Tag：keyring 中无凭据
+      credMissingHint: 'Token 已从安全存储中丢失，请用「重新验证」修复。', // 缺失 Tag 的 tooltip
+      checking: '检查中…', // 凭据存在性查询进行中
+      revalidate: '重新验证',
+      deleteCredential: '删除凭据',
+      // 重新验证对话框
+      revalidateTitle: '重新验证账号凭据',
+      tokenLabel: '新的 Token',
+      tokenPlaceholder: '粘贴新的访问令牌（Token）',
+      testAndSave: '测试并保存',
+      revalidateSuccess: '凭据已更新',
+      // 删除凭据的危险确认
+      deleteConfirmTitle: '删除账号凭据',
+      deleteConfirmMessage: '将从系统密钥库删除该账号的 Token，但保留账号元数据。',
+      deleteConfirmHint: '删除后该账号无法同步 / 克隆，需重新验证才能恢复。',
+      deleteSuccess: '凭据已删除',
+    },
+  },
+};

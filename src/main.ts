@@ -17,6 +17,7 @@ import { createPinia } from 'pinia';
 
 import App from './App.vue';
 import router from './router';
+import { i18n } from './i18n';
 
 // Element Plus 主题样式：默认浅色 + 暗色覆盖（具体切换由 settings 模块控制）
 import 'element-plus/dist/index.css';
@@ -28,6 +29,7 @@ const app = createApp(App);
 // 注册全局插件
 app.use(createPinia()); // 状态管理
 app.use(router); // 路由
+app.use(i18n); // 国际化（V1 仅设置页接入，见 src/i18n）
 
 // 挂载到 DOM
 app.mount('#app');

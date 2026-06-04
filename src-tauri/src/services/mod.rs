@@ -9,6 +9,8 @@
 //!   - `account_service`    — 账号 CRUD / 同步
 //!   - `repository_service` — 远程仓库查询 / 收藏
 //!   - `log_service`        — 操作日志（US6 完善）
+//!   - `settings_service`   — 应用设置 key/value 读写（US7）
+//!   - `proxy`              — 代理决策与应用（US7 / T105）
 
 pub mod account_service;
 pub mod clone_task_service;
@@ -20,4 +22,6 @@ pub mod github_service;
 pub mod gitlab_service;
 pub mod log_service;
 pub mod provider;
+pub mod proxy;
 pub mod repository_service;
+pub mod settings_service;

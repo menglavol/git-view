@@ -91,6 +91,21 @@ export const accountApi = {
   syncRepositories(accountId: string): Promise<number> {
     return invokeCmd<number>('sync_account_repositories', { accountId });
   },
+
+  /** 检查账号凭据是否存在于系统密钥库（仅返回存在性，绝不返回明文）。 */
+  checkCredentialExists(accountId: string): Promise<boolean> {
+    return invokeCmd<boolean>('check_credential_exists', { accountId });
+  },
+
+  /** 保存（覆盖）账号凭据到系统密钥库；用于「重新验证」修复缺失/失效凭据。 */
+  saveCredential(accountId: string, token: string): Promise<void> {
+    return invokeCmd<void>('save_credential', { accountId, token });
+  },
+
+  /** 删除账号凭据但保留账号元数据（破坏性操作，调用前须二次确认）。 */
+  deleteCredential(accountId: string): Promise<void> {
+    return invokeCmd<void>('delete_credential', { accountId });
+  },
 };
 
 /** 类型重新导出，便于 store/components 引用。 */

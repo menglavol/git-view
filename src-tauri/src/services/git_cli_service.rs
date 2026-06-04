@@ -77,41 +77,39 @@ pub struct GitCliService {
 }
 
 impl GitCliService {
-    /// 探测系统 Git 可执行文件。
+    /// 探测系统 Git 可执行文件（自动从 PATH / 常见安装位置查找）。
     ///
     /// 返回包含路径、版本号、`user.name`/`user.email` 的检测结果。
     pub async fn detect() -> Result<GitVersionInfo> {
         let git_path = locate_git_executable().await?;
+        probe_git(git_path).await
+    }
 
-        let version_output = Command::new(&git_path)
-            .arg("--version")
-            .env("LC_ALL", "C")
-            .output()
-            .await
-            .map_err(|e| GitViewError::GitCommand(format!("git --version 失败：{e}")))?;
+    /// 优先用设置中保存的自定义路径检测,失败回退自动探测（T100）。
+    ///
+    /// 用户在设置里指定过 git 路径时优先采信;若该路径已失效（卸载 / 移动）,
+    /// **不直接报错**,而是回退到 PATH / 常见位置自动探测——避免「设置过期」
+    /// 把整个 Git 功能卡死,让用户至少还能用系统里其它可用的 git。
+    pub async fn detect_with_preferred(preferred: Option<PathBuf>) -> Result<GitVersionInfo> {
+        if let Some(path) = preferred {
+            // 用户指定路径优先;探测失败（返回 Err）则静默落到自动探测
+            if let Ok(info) = probe_git(path).await {
+                return Ok(info);
+            }
+        }
+        Self::detect().await
+    }
 
-        if !version_output.status.success() {
+    /// 校验用户指定的 Git 路径并返回其检测信息（T100）。
+    ///
+    /// 只校验、**不写库**;持久化由 command 层调 `settings_service::set_git` 负责。
+    /// 路径不是有效文件时直接返回 `GitNotFound`,给前端比「命令执行失败」更准确的反馈;
+    /// 文件存在但跑不了 `git --version` 同样视为无效路径。
+    pub async fn set_git_path(path: PathBuf) -> Result<GitVersionInfo> {
+        if !path.is_file() {
             return Err(GitViewError::GitNotFound);
         }
-
-        let version_text = String::from_utf8_lossy(&version_output.stdout);
-        let trimmed = version_text.trim();
-        // strip_prefix 返回 None 时回退到 trim 结果；用 unwrap_or 会强制 eager
-        // 求值 fallback（虽然这里无副作用），换 unwrap_or_else 与现代约定一致
-        let version = trimmed
-            .strip_prefix("git version ")
-            .unwrap_or(trimmed)
-            .to_string();
-
-        let user_name = read_git_config(&git_path, "user.name").await.ok();
-        let user_email = read_git_config(&git_path, "user.email").await.ok();
-
-        Ok(GitVersionInfo {
-            path: git_path,
-            version,
-            user_name,
-            user_email,
-        })
+        probe_git(path).await
     }
 
     /// 使用指定的 Git 路径构造服务。
@@ -157,6 +155,7 @@ impl GitCliService {
         remote_url: &str,
         target_path: &Path,
         credentials: Option<CredentialInjection>,
+        extra_env: &[(String, String)],
         progress: F,
         cancel_token: CancellationToken,
     ) -> Result<()>
@@ -179,6 +178,12 @@ impl GitCliService {
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
+
+        // 注入调用方提供的额外环境变量（代理 HTTP_PROXY/HTTPS_PROXY,见 proxy::git_proxy_env）。
+        // 放在固定 env 之后、askpass 之前:代理与凭据互不覆盖,各自独立的环境键。
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
 
         if let Some(guard) = &askpass_guard {
             cmd.env("GIT_ASKPASS", guard.script_path());
@@ -606,6 +611,42 @@ async fn locate_git_executable() -> Result<PathBuf> {
     Err(GitViewError::GitNotFound)
 }
 
+/// 探测指定路径的 git:跑 `git --version` 解析版本 + 读全局 user.name/email。
+///
+/// 从 detect 提取的复用单元,供 detect / detect_with_preferred / set_git_path 共用,
+/// 避免「校验可执行 + 解析版本 + 读身份」三处逻辑重复。
+async fn probe_git(git_path: PathBuf) -> Result<GitVersionInfo> {
+    let version_output = Command::new(&git_path)
+        .arg("--version")
+        .env("LC_ALL", "C")
+        .output()
+        .await
+        .map_err(|e| GitViewError::GitCommand(format!("git --version 失败：{e}")))?;
+
+    if !version_output.status.success() {
+        return Err(GitViewError::GitNotFound);
+    }
+
+    let version_text = String::from_utf8_lossy(&version_output.stdout);
+    let trimmed = version_text.trim();
+    // 去掉 "git version " 前缀;没有该前缀时回退原始 trim 文本
+    let version = trimmed
+        .strip_prefix("git version ")
+        .unwrap_or(trimmed)
+        .to_string();
+
+    // 全局未配置身份很常见,读不到不算错,用 .ok() 转 Option
+    let user_name = read_git_config(&git_path, "user.name").await.ok();
+    let user_email = read_git_config(&git_path, "user.email").await.ok();
+
+    Ok(GitVersionInfo {
+        path: git_path,
+        version,
+        user_name,
+        user_email,
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn candidate_paths() -> Vec<PathBuf> {
     vec![
@@ -1000,5 +1041,19 @@ mod tests {
     fn map_network_failure_fallthrough_is_git_command() {
         let err = map_network_failure("pull", "some unknown failure");
         assert!(matches!(err, GitViewError::GitCommand(_)));
+    }
+
+    // -------------------------------------------------------------------
+    // T100 — set_git_path 路径校验
+    // -------------------------------------------------------------------
+
+    /// 验收标准（T100）：set_git_path 收到不存在的路径时返回 GitNotFound,
+    /// 无需真实 git 子进程即可判定（is_file 检查先于命令执行）。
+    #[tokio::test]
+    async fn set_git_path_rejects_nonexistent() {
+        let err = GitCliService::set_git_path(PathBuf::from("/nonexistent/git/binary"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, GitViewError::GitNotFound));
     }
 }

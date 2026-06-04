@@ -1683,7 +1683,7 @@ commit message 提交成功；执行 push 远程更新。
 **Independent Test**: 修改各项设置后重启应用，设置保持生效；批量 Clone 对话框
 预填来自设置的默认值。
 
-- [ ] T099 [P] [US7] 实现设置 service `src-tauri/src/services/settings_service.rs`
+- [x] T099 [P] [US7] 实现设置 service `src-tauri/src/services/settings_service.rs`
 
   **目标**：键值对读写，提供类型化 getter/setter。
 
@@ -1699,7 +1699,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：单元测试覆盖 get/set 跨重启。
 
-- [ ] T100 [US7] 实现 Git 检测 service 扩展 `git_cli_service.rs`
+- [x] T100 [US7] 实现 Git 检测 service 扩展 `git_cli_service.rs`
 
   **目标**：`detect_git` 与 `set_git_path` 两个 command 的业务逻辑。
 
@@ -1712,7 +1712,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：未安装 Git 的环境（mock PATH）返回 `found=false`。
 
-- [ ] T101 [US7] 实现设置 Tauri commands `src-tauri/src/commands/settings.rs`
+- [x] T101 [US7] 实现设置 Tauri commands `src-tauri/src/commands/settings.rs`
 
   **目标**：`get_settings`、`update_settings`、`detect_git`、`set_git_path`。
 
@@ -1720,7 +1720,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：4 个命令均注册。
 
-- [ ] T102 [P] [US7] 创建前端设置 API、store、页面
+- [x] T102 [P] [US7] 创建前端设置 API、store、页面
 
   **目标**：`src/api/settings.api.ts`、`src/stores/settings.ts`、
   `src/pages/Settings.vue`
@@ -1752,7 +1752,7 @@ commit message 提交成功；执行 push 远程更新。
   **验收标准**：与设计文档 §14 完全一致；修改后刷新页面仍保持；凭据状态列
   对手动从系统 keyring 删除 token 的账号正确显示"凭据缺失"。
 
-- [ ] T103 [US7] 实现主题切换逻辑 `src/stores/app.ts` + `src/styles/`
+- [x] T103 [US7] 实现主题切换逻辑 `src/stores/app.ts` + `src/styles/`
 
   **目标**：light / dark / system 三主题切换。
 
@@ -1764,7 +1764,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：切换 3 种主题视觉立即变化；重启后保持。
 
-- [ ] T104 [US7] 实现简易 i18n 骨架 `src/i18n/`
+- [x] T104 [US7] 实现简易 i18n 骨架 `src/i18n/`
 
   **目标**：spec 要求中/英文切换，V1 仅提供骨架与中文文案。
 
@@ -1777,7 +1777,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：设置中切换语言后立即更新标签文本。
 
-- [ ] T105 [US7] 实现代理配置生效 `src-tauri/src/services/`（跨服务）
+- [x] T105 [US7] 实现代理配置生效 `src-tauri/src/services/`（跨服务）
 
   **目标**：spec FR-058，所有远程调用按代理设置生效。
 
@@ -1791,7 +1791,7 @@ commit message 提交成功；执行 push 远程更新。
   **验收标准**：本地起 HTTP 代理（如 `mitmproxy`），设置后捕获到所有 API 与
   Git 流量。
 
-- [ ] T106 [US7] [T] 编写设置持久化集成测试 `tests/integration/settings_persistence_test.rs`
+- [x] T106 [US7] [T] 编写设置持久化集成测试 `tests/integration/settings_persistence_test.rs`
 
   **目标**：spec Acceptance Scenarios 验证。
 

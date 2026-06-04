@@ -23,7 +23,7 @@ use crate::errors::{GitViewError, Result};
 use crate::models::account::{Account, AccountUpdate, AddAccountPayload, TestConnectionPayload};
 use crate::models::operation_log::{OperationStatus, OperationType};
 use crate::services::provider::UserProfile;
-use crate::services::{account_service, log_service};
+use crate::services::{account_service, credential_service, log_service};
 use crate::AppState;
 
 /// 记录一次账号相关操作日志（US6）。
@@ -99,7 +99,7 @@ pub async fn test_account_connection(
     payload: TestConnectionPayload,
 ) -> Result<UserProfile> {
     let start = Instant::now();
-    let result = account_service::test_account_connection(payload).await;
+    let result = account_service::test_account_connection(&state.db, payload).await;
     // 成功时以探测到的用户名为 target，失败时退化为固定描述
     let target = result
         .as_ref()
@@ -189,4 +189,35 @@ pub async fn sync_account_repositories(
         output.as_deref(),
     );
     result
+}
+
+// =====================================================================
+// US7 / FR-055：凭据级命令（只操作 keyring 里的 token,不碰账号元数据）
+// =====================================================================
+
+/// 检查账号凭据是否存在于系统密钥库。
+///
+/// 只返回存在性布尔,**绝不返回 token 明文**——供设置页「账号与安全」展示
+/// 「已存储 / 凭据缺失」状态,后者提示用户需要重新验证。
+#[tauri::command]
+pub fn check_credential_exists(account_id: String) -> Result<bool> {
+    credential_service::token_exists(&account_id)
+}
+
+/// 保存（覆盖）账号凭据到系统密钥库。
+///
+/// `token` 为明文,写入 keyring 后即释放,绝不落库、绝不进日志。
+/// 供「重新验证」在 test_account_connection 成功后调用,修复缺失或失效的凭据。
+#[tauri::command]
+pub fn save_credential(account_id: String, token: String) -> Result<()> {
+    credential_service::save_token(&account_id, &token)
+}
+
+/// 删除账号凭据,但**保留账号元数据**。
+///
+/// 与 delete_account 的区别:这里只清除 keyring 里的 token,账号记录仍在,
+/// 用户之后可通过「重新验证」补回。属破坏性操作,前端须经 ConfirmDangerDialog 确认。
+#[tauri::command]
+pub fn delete_credential(account_id: String) -> Result<()> {
+    credential_service::delete_token(&account_id)
 }

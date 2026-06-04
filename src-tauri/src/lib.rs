@@ -229,6 +229,15 @@ pub fn run() {
             commands::logs::list_operation_logs,
             commands::logs::get_operation_log_detail,
             commands::logs::clear_old_operation_logs,
+            // US7 设置与默认目录
+            commands::settings::get_settings,
+            commands::settings::update_settings,
+            commands::settings::detect_git,
+            commands::settings::set_git_path,
+            // US7 凭据级命令（账号与安全 / FR-055）
+            commands::accounts::check_credential_exists,
+            commands::accounts::save_credential,
+            commands::accounts::delete_credential,
         ])
         .run(tauri::generate_context!())
         .expect("启动 GitView 应用失败：Tauri Builder.run() 异常");

@@ -30,7 +30,9 @@ use crate::models::settings::DirectoryStrategy;
 use crate::services::credential_service;
 use crate::services::git_cli_service::{CloneProgressEvent, CredentialInjection, GitCliService};
 use crate::services::log_service;
+use crate::services::proxy::{git_proxy_env, resolve_proxy};
 use crate::services::repository_service;
+use crate::services::settings_service;
 use crate::utils::path::ensure_dir_exists;
 use crate::utils::redact::redact_token;
 
@@ -301,6 +303,14 @@ async fn run_one_task<R: tauri::Runtime>(
         );
     };
 
+    // 读全局网络设置,把代理转成 git 子进程环境变量。
+    // V1 clone 流程不区分账号级代理,统一用全局兜底;读设置失败回退默认（无代理）,
+    // 不让设置异常阻断 clone。Explicit 才注入 HTTP(S)_PROXY,System/None 为空。
+    let proxy_env = {
+        let net = settings_service::get_network(&pool).unwrap_or_default();
+        git_proxy_env(&resolve_proxy(&net, None, false))
+    };
+
     let start = Instant::now();
     let clone_result = manager
         .git
@@ -308,6 +318,7 @@ async fn run_one_task<R: tauri::Runtime>(
             &task.remote_url,
             &target_path,
             credentials,
+            &proxy_env,
             progress_cb,
             cancel.clone(),
         )

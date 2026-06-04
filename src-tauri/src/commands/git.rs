@@ -58,9 +58,10 @@ fn make_git_cli() -> GitCliService {
 /// 日志面向人阅读，目录名（如 `myrepo`）远比主键易懂；取不到末段时
 /// 退化为完整路径，保证 target 永远非空。
 fn repo_name(path: &Path) -> String {
-    path.file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+    path.file_name().map_or_else(
+        || path.to_string_lossy().into_owned(),
+        |s| s.to_string_lossy().into_owned(),
+    )
 }
 
 /// 统一记录一次 Git 操作日志（US6）。
@@ -402,7 +403,9 @@ pub async fn git_discard_changes(
     // 转成 &str 切片传给服务层：CLI 封装按引用消费文件列表，避免不必要的克隆
     let refs: Vec<&str> = files.iter().map(String::as_str).collect();
     let start = Instant::now();
-    let result = make_git_cli().discard_changes(&path, &refs, confirmed).await;
+    let result = make_git_cli()
+        .discard_changes(&path, &refs, confirmed)
+        .await;
     log_git_result(
         &state.db,
         OperationType::DiscardChanges,

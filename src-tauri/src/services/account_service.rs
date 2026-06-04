@@ -27,11 +27,14 @@ use crate::models::account::{
     ConnectionStatus, GitLabInstanceConfig, GitPlatform, TestConnectionPayload,
 };
 use crate::models::repository::Visibility;
+use crate::models::settings::NetworkSettings;
 use crate::services::credential_service;
 use crate::services::gitee_service::{GiteeAuthMode, GiteeProvider};
 use crate::services::github_service::GitHubProvider;
 use crate::services::gitlab_service::{derive_gitlab_api_url, GitLabClientConfig, GitLabProvider};
 use crate::services::provider::{GitHostingProvider, UserProfile};
+use crate::services::proxy::{resolve_proxy, ProxyDecision};
+use crate::services::settings_service;
 
 /// 账号服务的可克隆运行时状态。
 ///
@@ -113,13 +116,15 @@ pub async fn add_account(pool: &DbPool, payload: AddAccountPayload) -> Result<Ac
         payload.api_base_url.as_deref(),
     )?;
 
-    // 1) 测试连接
+    // 1) 测试连接（读全局网络设置注入代理,与后续同步行为一致）
+    let net = settings_service::get_network(pool)?;
     let profile = test_connection_inner(
         payload.platform,
         &payload.web_base_url,
         &api_base_url,
         &payload.token,
         payload.instance_config.as_ref(),
+        &net,
     )
     .await?;
 
@@ -246,52 +251,59 @@ pub async fn add_account(pool: &DbPool, payload: AddAccountPayload) -> Result<Ac
 // =====================================================================
 
 /// 测试账号连接（不写入数据库）。
-pub async fn test_account_connection(payload: TestConnectionPayload) -> Result<UserProfile> {
+///
+/// `pool` 仅用于读取全局网络设置以注入代理,不产生写副作用。
+pub async fn test_account_connection(
+    pool: &DbPool,
+    payload: TestConnectionPayload,
+) -> Result<UserProfile> {
     let api_base_url = resolve_api_base_url(
         payload.platform,
         &payload.web_base_url,
         payload.api_base_url.as_deref(),
     )?;
+    let net = settings_service::get_network(pool)?;
     test_connection_inner(
         payload.platform,
         &payload.web_base_url,
         &api_base_url,
         &payload.token,
         payload.instance_config.as_ref(),
+        &net,
     )
     .await
 }
 
 /// 内部：根据平台构造 Provider 并调用 get_current_user。
+///
+/// `net` 为全局网络设置:GitHub/Gitee 无账号级代理,直接用全局兜底;
+/// GitLab 自建实例的账号级代理优先,未配时回退全局（见 `provider_proxy`）。
 async fn test_connection_inner(
     platform: GitPlatform,
     _web_base_url: &str,
     api_base_url: &str,
     token: &str,
     instance_config: Option<&AddGitLabInstanceConfigPayload>,
+    net: &NetworkSettings,
 ) -> Result<UserProfile> {
     let provider: Box<dyn GitHostingProvider> = match platform {
         GitPlatform::Github => Box::new(GitHubProvider::new(
             Some(api_base_url.to_string()),
             token.to_string(),
-            None,
+            provider_proxy(net, None, false),
         )?),
         GitPlatform::Gitlab => {
             let cfg = instance_config.map_or_else(
                 || GitLabClientConfig {
                     api_base_url: api_base_url.to_string(),
                     allow_invalid_certs: false,
-                    proxy_url: None,
+                    proxy_url: provider_proxy(net, None, false),
                     request_timeout_seconds: None,
                 },
                 |c| GitLabClientConfig {
                     api_base_url: api_base_url.to_string(),
                     allow_invalid_certs: c.allow_invalid_certs,
-                    proxy_url: if c.use_system_proxy {
-                        None
-                    } else {
-                        c.proxy_url.clone()
-                    },
+                    proxy_url: provider_proxy(net, c.proxy_url.as_deref(), c.use_system_proxy),
                     request_timeout_seconds: c.request_timeout_seconds,
                 },
             );
@@ -300,7 +312,7 @@ async fn test_connection_inner(
         GitPlatform::Gitee => Box::new(GiteeProvider::new(
             Some(api_base_url.to_string()),
             token.to_string(),
-            None,
+            provider_proxy(net, None, false),
             GiteeAuthMode::Header,
         )?),
     };
@@ -721,17 +733,42 @@ fn resolve_api_base_url(
     }
 }
 
+/// 把账号级与全局网络设置合并成传给 Provider 的代理 URL。
+///
+/// Provider 的 `new` 只收 `Option<String>`,故把三态 `ProxyDecision` 压成两态:
+///   - `Explicit(url)` → `Some(url)`,强制走该代理
+///   - `System` / `None` → `None`,交由 reqwest 默认（读环境变量,即跟随系统;
+///     直连场景无环境代理变量时即直连）
+///
+/// V1 直连与跟随系统在「无环境代理变量」时行为一致,差异可忽略,故不为
+/// `None` 单独表达「强制直连」。
+fn provider_proxy(
+    net: &NetworkSettings,
+    account_proxy: Option<&str>,
+    account_use_system: bool,
+) -> Option<String> {
+    match resolve_proxy(net, account_proxy, account_use_system) {
+        ProxyDecision::Explicit(url) => Some(url),
+        ProxyDecision::System | ProxyDecision::None => None,
+    }
+}
+
 /// 根据账号信息构造对应平台的 Provider 实例。
+///
+/// 代理:读全局网络设置并与账号级代理（仅自建 GitLab 有）合并后传给 provider,
+/// 让设置里的全局代理对所有平台 API 调用生效——GitHub/Gitee 无账号级代理,
+/// 之前恒直连,这里补上全局兜底。
 fn build_provider(
     pool: &DbPool,
     account: &Account,
     token: &str,
 ) -> Result<Box<dyn GitHostingProvider>> {
+    let net = settings_service::get_network(pool)?;
     match account.platform {
         GitPlatform::Github => Ok(Box::new(GitHubProvider::new(
             Some(account.api_base_url.clone()),
             token.to_string(),
-            None,
+            provider_proxy(&net, None, false),
         )?)),
         GitPlatform::Gitlab => {
             let instance_cfg = get_gitlab_instance_config(pool, &account.id)?;
@@ -739,17 +776,13 @@ fn build_provider(
                 || GitLabClientConfig {
                     api_base_url: account.api_base_url.clone(),
                     allow_invalid_certs: false,
-                    proxy_url: None,
+                    proxy_url: provider_proxy(&net, None, false),
                     request_timeout_seconds: None,
                 },
                 |c| GitLabClientConfig {
                     api_base_url: account.api_base_url.clone(),
                     allow_invalid_certs: c.allow_invalid_certs,
-                    proxy_url: if c.use_system_proxy {
-                        None
-                    } else {
-                        c.proxy_url
-                    },
+                    proxy_url: provider_proxy(&net, c.proxy_url.as_deref(), c.use_system_proxy),
                     request_timeout_seconds: c.request_timeout_seconds,
                 },
             );
@@ -758,7 +791,7 @@ fn build_provider(
         GitPlatform::Gitee => Ok(Box::new(GiteeProvider::new(
             Some(account.api_base_url.clone()),
             token.to_string(),
-            None,
+            provider_proxy(&net, None, false),
             GiteeAuthMode::Header,
         )?)),
     }

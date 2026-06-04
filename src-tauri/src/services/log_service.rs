@@ -507,7 +507,7 @@ mod tests {
         // command 与 error_message 均不得保留原始 token 字节
         assert!(!log.command.as_ref().unwrap().contains("ghp_")); // allow-token-pattern: 断言无 token
         assert!(!log.error_message.as_ref().unwrap().contains("ghp_")); // allow-token-pattern: 断言无 token
-        // 失败消息含 "Authentication failed" → 应有中文翻译
+                                                                        // 失败消息含 "Authentication failed" → 应有中文翻译
         assert!(log.translated_error_message.is_some());
     }
 
