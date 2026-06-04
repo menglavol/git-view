@@ -12,7 +12,7 @@
 -->
 <template>
   <ElTable
-    v-loading="loading"
+    v-loading="loading ?? false"
     :data="items"
     style="width: 100%"
     row-key="id"

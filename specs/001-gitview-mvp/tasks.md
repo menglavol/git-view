@@ -1809,7 +1809,7 @@ commit message 提交成功；执行 push 远程更新。
 
 **Purpose**: 完成首页仪表盘、跨平台打包、安全审计、性能基线、文档与发布物。
 
-- [ ] T107 [P] 实现首页仪表盘页面 `src/pages/Dashboard.vue`（spec FR-059）
+- [x] T107 [P] 实现首页仪表盘页面 `src/pages/Dashboard.vue`（spec FR-059）
 
   **目标**：聚合展示账号数、远程仓库数、本地仓库数、运行中 Clone 数、
   有未提交变更的仓库数、最近打开仓库、最近任务、快捷入口。
