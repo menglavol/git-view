@@ -1834,7 +1834,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：`npm run tauri build` 在三平台生成可分发包。
 
-- [ ] T109 实现首次启动引导 `src/App.vue` 与 `src/router/index.ts`
+- [x] T109 实现首次启动引导 `src/App.vue` 与 `src/router/index.ts`
 
   **目标**：spec User Story 7 Acceptance Scenario 1，未安装 Git 时引导。
 

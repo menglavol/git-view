@@ -548,6 +548,9 @@ async function onDetectGit(): Promise<void> {
   try {
     const result = path ? await settingsStore.setGitPath(path) : await settingsStore.detectGit();
     gitDetection.value = result;
+    // 同步到 app store：让首次启动引导的路由守卫感知最新 git 状态（T109），
+    // 否则用户在此修好路径后，守卫仍用启动时的过期结果把他弹回引导页。
+    appStore.gitDetection = result;
     if (result.found) {
       // 回填探测到的路径与身份（仅在用户未手填时填充，避免覆盖用户输入）
       if (result.path) form.git.gitExecutablePath = result.path;

@@ -491,11 +491,13 @@ pub fn clear_finished_clone_tasks(pool: &DbPool) -> Result<usize> {
 }
 
 // =====================================================================
-// 启动期回扫（T117 雏形 - 把 running/pending 改为 failed）
+// 启动期回扫（T117）
+//   1. 把上次会话遗留的 running/pending 任务标记为 failed（消除「幽灵任务」）
+//   2. 清理崩溃残留的 askpass 临时脚本（正常由 RAII drop 删除）
 // =====================================================================
 
 pub fn reconcile_orphan_tasks(pool: &DbPool) -> Result<usize> {
-    pool.with_conn(|conn| {
+    let reconciled = pool.with_conn(|conn| {
         let n = conn
             .execute(
                 "UPDATE clone_tasks
@@ -507,7 +509,17 @@ pub fn reconcile_orphan_tasks(pool: &DbPool) -> Result<usize> {
             )
             .map_err(GitViewError::from)?;
         Ok(n)
-    })
+    })?;
+
+    // 顺带清理崩溃残留的 askpass 脚本：应用被强杀时 AskpassGuard 的 drop 不执行，
+    // 含一次性凭据的脚本会滞留临时目录，启动时静默清掉（属本应用 housekeeping）。
+    let cleaned =
+        crate::services::git_cli_service::cleanup_orphan_askpass_scripts(&std::env::temp_dir());
+    if cleaned > 0 {
+        tracing::info!("清理 {cleaned} 个残留 askpass 脚本");
+    }
+
+    Ok(reconciled)
 }
 
 // =====================================================================

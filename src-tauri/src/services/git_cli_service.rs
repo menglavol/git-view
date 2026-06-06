@@ -793,6 +793,13 @@ fn cleanup_partial_clone(target_path: &Path) {
 // GIT_ASKPASS 临时脚本（T056）
 // =====================================================================
 
+/// askpass 临时脚本统一文件名前缀。
+///
+/// 创建（`AskpassGuard::create`）与崩溃残留清理
+/// （`cleanup_orphan_askpass_scripts`，T117）共用此常量，
+/// 避免两处命名漂移导致「清理匹配不到自己创建的文件」。
+const ASKPASS_PREFIX: &str = "gitview-askpass-";
+
 /// RAII 守护：构造时创建 askpass 脚本，drop 时删除。
 pub struct AskpassGuard {
     script_path: PathBuf,
@@ -809,9 +816,9 @@ impl AskpassGuard {
         let id = Uuid::new_v4();
         let dir = std::env::temp_dir();
         let script_path = if cfg!(windows) {
-            dir.join(format!("gitview-askpass-{id}.bat"))
+            dir.join(format!("{ASKPASS_PREFIX}{id}.bat"))
         } else {
-            dir.join(format!("gitview-askpass-{id}.sh"))
+            dir.join(format!("{ASKPASS_PREFIX}{id}.sh"))
         };
 
         let content = if cfg!(windows) {
@@ -860,6 +867,37 @@ impl Drop for AskpassGuard {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.script_path);
     }
+}
+
+/// 清理系统临时目录下残留的 askpass 脚本，返回删除的文件数（T117）。
+///
+/// 正常路径由 [`AskpassGuard`] 的 `Drop` 删除脚本；但应用崩溃 / 被强杀时
+/// `Drop` 不会执行，含一次性凭据的脚本会滞留在临时目录。启动期回扫调用本
+/// 函数把这些残留清掉，属本应用 housekeeping，静默执行无需用户确认。
+///
+/// **安全约束**：只按本应用前缀 [`ASKPASS_PREFIX`] 匹配、不递归子目录，
+/// 绝不误删用户或其它程序的临时文件；单个文件删除失败（如被占用）仅跳过，
+/// 不中断整体清理。
+#[must_use]
+pub fn cleanup_orphan_askpass_scripts(dir: &Path) -> usize {
+    // 临时目录读不到（不存在 / 无权限）时直接返回 0，回扫在任何环境都不应 panic。
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        // 仅匹配本应用前缀，且删除成功才计数；二者用 && 短路避免误删后多计。
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(ASKPASS_PREFIX)
+            && std::fs::remove_file(entry.path()).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// 把字符串包装为 POSIX 单引号转义形式，防止脚本注入。
@@ -971,6 +1009,39 @@ mod tests {
             .to_string();
         assert!(!name.contains("secret"));
         assert!(!name.contains("ghp_"));
+    }
+
+    // -------------------------------------------------------------------
+    // T117 — 启动期清理残留 askpass 脚本
+    // -------------------------------------------------------------------
+
+    /// 验收标准（T117）：清理只删本应用前缀的 askpass 脚本，
+    /// 其它临时文件原样保留，并返回准确的删除计数。
+    #[test]
+    fn cleanup_removes_only_gitview_askpass_scripts() {
+        let dir = tempfile::tempdir().unwrap();
+        // 模拟崩溃残留的 askpass 脚本（.sh / .bat 两类扩展名都覆盖）
+        std::fs::write(dir.path().join("gitview-askpass-aaa.sh"), "x").unwrap();
+        std::fs::write(dir.path().join("gitview-askpass-bbb.bat"), "x").unwrap();
+        // 无关文件：必须保留，验证前缀匹配不会误伤
+        std::fs::write(dir.path().join("unrelated.tmp"), "x").unwrap();
+
+        let removed = cleanup_orphan_askpass_scripts(dir.path());
+
+        assert_eq!(removed, 2);
+        assert!(
+            dir.path().join("unrelated.tmp").exists(),
+            "无关文件不应被删除"
+        );
+        assert!(!dir.path().join("gitview-askpass-aaa.sh").exists());
+        assert!(!dir.path().join("gitview-askpass-bbb.bat").exists());
+    }
+
+    /// 目录不存在时返回 0 而非 panic：回扫在空白 / 异常环境也要安全。
+    #[test]
+    fn cleanup_on_missing_dir_returns_zero() {
+        let removed = cleanup_orphan_askpass_scripts(Path::new("/no/such/gitview/tmp/dir"));
+        assert_eq!(removed, 0);
     }
 
     // -------------------------------------------------------------------
