@@ -44,6 +44,17 @@ export default defineConfig(async () => ({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  // vue-i18n 生产构建特性开关。
+  // 关键是 __INTLIFY_JIT_COMPILATION__：本项目 messages 以 TS 对象传入（未走
+  // 预编译插件），生产构建默认不含 message compiler，会导致 t() 渲染为空
+  // （设置页全是 t()，dev 正常但打包后整片空白）。开启 JIT 让运行时（含生产）
+  // 也能编译 messages；其余三个 flag 用于消除 vue-i18n 的特性未定义告警。
+  define: {
+    __VUE_I18N_FULL_INSTALL__: true,
+    __VUE_I18N_LEGACY_API__: false,
+    __INTLIFY_PROD_DEVTOOLS__: false,
+    __INTLIFY_JIT_COMPILATION__: true,
+  },
   // 防止 Vite 屏蔽掉 Rust 编译错误，保留 Tauri 输出
   clearScreen: false,
   // 开发服务器配置
