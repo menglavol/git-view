@@ -619,6 +619,10 @@ pub async fn sync_account_repositories(
 
     let provider: Box<dyn GitHostingProvider> = build_provider(pool, &account, &token)?;
 
+    // 同步起始时刻：后续拉取动作均发生在此之后，故本批仓库的 synced_at 必定 >= 该值。
+    // 用它（而非拉取完成后的时刻）作为清理旧记录的基准，避免误删刚 upsert 的新记录。
+    let sync_started_at = Utc::now().to_rfc3339();
+
     let mut all_repos = Vec::new();
     let mut page = 1_u32;
     let per_page = 100_u32;
@@ -689,11 +693,13 @@ pub async fn sync_account_repositories(
             .map_err(GitViewError::from)?;
         }
 
-        // 清理本次同步未覆盖到的旧记录（保留收藏的）
+        // 清理本次同步未覆盖到的旧记录（保留收藏的）。
+        // 基准用 sync_started_at（拉取前时刻），而非拉取完成后的时刻：
+        // 新记录 synced_at 来自 provider 拉取时刻，必 >= sync_started_at，不会被误删。
         conn.execute(
             "DELETE FROM remote_repositories
              WHERE account_id = ?1 AND synced_at < ?2 AND is_favorite = 0",
-            params![acc_id, now_iso],
+            params![acc_id, sync_started_at],
         )
         .map_err(GitViewError::from)?;
 
