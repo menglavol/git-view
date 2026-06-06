@@ -68,6 +68,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { ElMessage } from 'element-plus';
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 
 import type { RemoteRepository, Visibility } from '@/types/repository';
 import type { GitPlatform } from '@/types/account';
@@ -120,7 +121,16 @@ function onCopy(url: string): void {
 }
 
 function onOpenWeb(url: string): void {
-  window.open(url, '_blank');
+  // htmlUrl 理论上必有；为空时给明确提示而非静默失败
+  if (!url) {
+    ElMessage.warning('该仓库没有可打开的网页地址');
+    return;
+  }
+  // 用系统默认浏览器打开：Tauri webview 不支持 window.open 打开外链，
+  // 必须走 shell 插件的 open（capabilities 已授权 shell:allow-open）
+  void openExternal(url).catch((e) => {
+    ElMessage.error(`打开网页失败：${e instanceof Error ? e.message : String(e)}`);
+  });
 }
 </script>
 
