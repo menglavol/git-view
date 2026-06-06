@@ -55,14 +55,20 @@ export const useLocalRepositoryStore = defineStore('localRepository', () => {
     return repo;
   }
 
-  /** 扫描父目录批量添加；scanning 状态在期间为 true。 */
-  async function scanRoot(root: string, maxDepth?: number): Promise<number> {
+  /** 扫描父目录：新增仓库并清理该目录下已失效的记录；返回新增 / 移除计数。 */
+  async function scanRoot(
+    root: string,
+    maxDepth?: number,
+  ): Promise<{ added: number; removed: number }> {
+    // 扫描可能耗时，置 scanning 标志驱动表格 loading 并禁止重复触发
     scanning.value = true;
     error.value = null;
     try {
-      const added = await localRepositoryApi.scan(root, maxDepth);
+      // 后端已在该父目录下清理失效记录；这里拉全量刷新列表以同时反映新增与移除
+      const result = await localRepositoryApi.scan(root, maxDepth);
       await fetchAll();
-      return added.length;
+      // 仅回传计数：页面据此提示「新增 X、移除 Y」，无需完整列表
+      return { added: result.added.length, removed: result.removed };
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
       throw e;

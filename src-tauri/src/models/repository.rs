@@ -107,3 +107,13 @@ pub struct LocalRepository {
     /// 记录创建时间
     pub created_at: DateTime<Utc>,
 }
+
+/// 扫描父目录的结果：新增的仓库列表 + 清理掉的失效记录数。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanResult {
+    /// 本次扫描新增的本地仓库（不含已存在的）
+    pub added: Vec<LocalRepository>,
+    /// 本次清理掉的失效记录数（在扫描父目录之下、磁盘已不存在）
+    pub removed: usize,
+}

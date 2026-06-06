@@ -43,6 +43,14 @@ export interface LocalRepository {
   createdAt: string;
 }
 
+/** 扫描父目录的结果：新增仓库列表 + 清理掉的失效记录数。 */
+export interface ScanResult {
+  /** 本次新增的本地仓库（不含已存在的） */
+  added: LocalRepository[];
+  /** 本次清理掉的失效记录数（在扫描父目录之下、磁盘已不存在） */
+  removed: number;
+}
+
 /** 单个仓库 Fetch 失败明细。 */
 export interface FetchFailure {
   /** 仓库 id（local_repositories.id） */

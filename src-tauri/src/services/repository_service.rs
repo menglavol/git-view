@@ -2,6 +2,7 @@
 //!
 //! 提供远程仓库查询（筛选/搜索/收藏）与本地仓库管理（添加/扫描/移除/状态刷新/批量 Fetch）。
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +14,9 @@ use walkdir::WalkDir;
 use crate::db::pool::DbPool;
 use crate::errors::{GitViewError, Result};
 use crate::models::account::GitPlatform;
-use crate::models::repository::{LocalRepository, RemoteRepository, RepositoryStatus, Visibility};
+use crate::models::repository::{
+    LocalRepository, RemoteRepository, RepositoryStatus, ScanResult, Visibility,
+};
 use crate::services::git_reader_service;
 use crate::utils::path::is_git_repository;
 
@@ -542,7 +545,7 @@ pub async fn scan_local_repositories(
     pool: &DbPool,
     root: &Path,
     max_depth: usize,
-) -> Result<Vec<LocalRepository>> {
+) -> Result<ScanResult> {
     if !root.exists() {
         return Err(GitViewError::PathMissing(root.display().to_string()));
     }
@@ -565,13 +568,28 @@ pub async fn scan_local_repositories(
     }
 
     let mut added = Vec::new();
-    for path in found_paths {
-        if let Ok(repo) = add_local_repository(pool, &path).await {
+    for path in &found_paths {
+        if let Ok(repo) = add_local_repository(pool, path).await {
             added.push(repo);
         }
     }
 
-    Ok(added)
+    // 清理：扫描父目录之下、但本次未扫到（磁盘已删除）的旧记录。
+    // 仅限 root 子树——绝不影响扫描目录之外的仓库（手动添加 / 其他目录扫描来的）。
+    let found_set: HashSet<String> = found_paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let mut removed = 0usize;
+    for repo in list_local_repositories(pool)? {
+        // starts_with 按路径组件比较，避免 `/a/foo` 误判为 `/a/foo-bar` 的子路径
+        if Path::new(&repo.local_path).starts_with(root) && !found_set.contains(&repo.local_path) {
+            remove_local_repository(pool, &repo.id)?;
+            removed += 1;
+        }
+    }
+
+    Ok(ScanResult { added, removed })
 }
 
 /// 从列表移除本地仓库（仅删除数据库记录，不删除磁盘文件）。

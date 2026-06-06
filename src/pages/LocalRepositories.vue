@@ -142,8 +142,8 @@ async function onScan(): Promise<void> {
     const selected = await openDialog({ directory: true, multiple: false });
     if (typeof selected !== 'string') return;
     // 默认 max_depth=5（由后端 command 默认值控制），覆盖常见嵌套布局
-    const count = await store.scanRoot(selected);
-    ElMessage.success(`扫描完成，新增 ${count} 个仓库`);
+    const { added, removed } = await store.scanRoot(selected);
+    ElMessage.success(`扫描完成：新增 ${added} 个，移除 ${removed} 个失效仓库`);
   } catch (e) {
     ElMessage.error(`扫描失败：${e instanceof Error ? e.message : String(e)}`);
   }

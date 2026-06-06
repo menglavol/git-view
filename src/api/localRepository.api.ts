@@ -5,7 +5,7 @@
 // =====================================================================
 
 import { invokeCmd } from './tauri';
-import type { BatchFetchSummary, LocalRepository } from '@/types/repository';
+import type { BatchFetchSummary, LocalRepository, ScanResult } from '@/types/repository';
 
 export const localRepositoryApi = {
   /** 添加单个本地仓库（路径由前端通过 dialog 选目录得到）。 */
@@ -13,9 +13,9 @@ export const localRepositoryApi = {
     return invokeCmd<LocalRepository>('add_local_repository', { path });
   },
 
-  /** 扫描父目录批量添加 Git 仓库。`maxDepth` 缺省时后端使用 5。 */
-  scan(root: string, maxDepth?: number): Promise<LocalRepository[]> {
-    return invokeCmd<LocalRepository[]>('scan_local_repositories', {
+  /** 扫描父目录：新增 Git 仓库并清理该目录下已失效的记录。`maxDepth` 缺省时后端使用 5。 */
+  scan(root: string, maxDepth?: number): Promise<ScanResult> {
+    return invokeCmd<ScanResult>('scan_local_repositories', {
       root,
       maxDepth: maxDepth ?? null,
     });

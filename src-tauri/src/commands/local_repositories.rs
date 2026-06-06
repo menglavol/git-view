@@ -28,7 +28,7 @@ use tauri::State;
 
 use crate::errors::{GitViewError, Result};
 use crate::models::operation_log::{OperationStatus, OperationType};
-use crate::models::repository::LocalRepository;
+use crate::models::repository::{LocalRepository, ScanResult};
 use crate::services::log_service;
 use crate::services::repository_service::{self, BatchFetchSummary};
 use crate::AppState;
@@ -57,10 +57,12 @@ pub async fn scan_local_repositories(
     state: State<'_, AppState>,
     root: String,
     max_depth: Option<usize>,
-) -> Result<Vec<LocalRepository>> {
+) -> Result<ScanResult> {
     // 未显式指定深度时默认下钻 5 层：足以覆盖 ~/Projects/<group>/<repo> 这类常见嵌套，
     // 又能避免在超深目录树上无谓地长时间扫描
     let depth = max_depth.unwrap_or(5);
+    // 下面调用 service：新增本次扫到的仓库，
+    // 并清理该父目录之下、磁盘已消失的旧记录（仅限该父目录子树，不动其它仓库）
     let start = Instant::now();
     let result =
         repository_service::scan_local_repositories(&state.db, Path::new(&root), depth).await;
@@ -69,9 +71,13 @@ pub async fn scan_local_repositories(
     let duration_ms = start.elapsed().as_millis() as u64;
     // 扫描结果转为日志状态：成功记识别到的仓库数量，失败记脱敏后的错误原因
     let (status, output, err) = match &result {
-        Ok(repos) => (
+        Ok(r) => (
             OperationStatus::Success,
-            Some(format!("识别 {} 个仓库", repos.len())),
+            Some(format!(
+                "新增 {} 个，移除 {} 个失效",
+                r.added.len(),
+                r.removed
+            )),
             None,
         ),
         Err(e) => (OperationStatus::Failed, None, Some(e.to_string())),
