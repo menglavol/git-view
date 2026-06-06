@@ -212,7 +212,7 @@ pub fn start_clone_tasks<R: tauri::Runtime>(
         let app = app_handle.clone();
         let pool = pool.clone();
         let mgr = manager.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             run_one_task(app, pool, mgr, task_id, auto_add_to_local).await;
         });
     }
