@@ -25,7 +25,10 @@
     <header class="repo-header">
       <div class="repo-summary">
         <!-- 仓库标题:取本地路径末段 -->
-        <h2 class="repo-name">{{ repoLabel }}</h2>
+        <div class="repo-title-row">
+          <el-button text size="small" class="back-btn" @click="goBack">← 返回</el-button>
+          <h2 class="repo-name">{{ repoLabel }}</h2>
+        </div>
         <div class="repo-meta">
           <!-- 分支选择器组件:脏工作区下自身处理 disable -->
           <BranchSelector
@@ -112,7 +115,7 @@
  *   - 处理 BranchSelector 切换分支 + DirtyWorkdir 错误兜底提示。
  */
 import { computed, onMounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 // gitApi:封装 src-tauri/src/commands/git.rs 的 15 个 IPC 命令
@@ -130,6 +133,12 @@ import type { Branch, DiffResult, FileChange, GitStatus } from '@/types/git';
 import type { LocalRepository } from '@/types/repository';
 
 const route = useRoute();
+const router = useRouter();
+
+/** 返回本地仓库列表页（固定跳转，不依赖浏览器历史）。 */
+function goBack(): void {
+  void router.push({ name: 'local-repositories' });
+}
 const localStore = useLocalRepositoryStore();
 
 /** 路由参数 id,对应 local_repositories.id */
@@ -436,6 +445,14 @@ watch(selectedFile, () => {
   padding: 8px 12px; /* 内边距 */
   background: var(--el-bg-color-page); /* 浅背景区分 */
   border-radius: 4px; /* 圆角 */
+}
+.repo-title-row {
+  display: flex; /* 返回按钮与仓库名同一行 */
+  align-items: center; /* 垂直居中 */
+  gap: 8px; /* 按钮与标题间距 */
+}
+.back-btn {
+  padding: 0; /* 文字按钮去内边距，更像返回链接 */
 }
 .repo-name {
   font-size: 16px; /* 标题字号 */
