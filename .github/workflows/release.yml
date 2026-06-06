@@ -1,0 +1,74 @@
+name: Release
+
+# =====================================================================
+# GitView 发布工作流
+# 触发：push 形如 v* 的 tag（如 v0.1.0）
+# 平台矩阵：macOS / Windows / Ubuntu，分别产出 .dmg / .msi / .deb+.AppImage
+# 产物：由 tauri-action 创建 GitHub Release（草稿）并上传安装包
+#
+# 发布门禁（宪法 Principle III）：构建前先跑 Token 泄漏与凭据残留安全扫描。
+# 注：V1 暂未做 macOS 公证与 Windows 代码签名，首次运行警告的绕过方法见 README。
+# =====================================================================
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Release on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      # tauri-action 需要写权限以创建 Release 并上传 artifact
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install frontend deps
+        run: npm ci
+
+      # 发布前安全门禁：仅在 Ubuntu 跑一次即可（脚本跨平台一致）
+      - name: Security scan (token leak + credential cleanup)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          bash scripts/check-no-token-leak.sh
+          bash scripts/check-credential-cleanup.sh
+
+      - name: Build & release (Tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # 复用触发的 tag 作为 release 版本号
+          tagName: ${{ github.ref_name }}
+          releaseName: 'GitView ${{ github.ref_name }}'
+          releaseBody: '安装包见下方 Assets。首次运行未签名包的放行方法见 README「安装」一节。'
+          # 先发草稿，人工确认无误后再正式发布，避免误触对外发布
+          releaseDraft: true
+          prerelease: false

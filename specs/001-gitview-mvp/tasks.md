@@ -1862,7 +1862,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：手工创建测试 tag 触发构建，artifact 可下载安装。
 
-- [ ] T111 [P] 编写 README.md 中文文档
+- [x] T111 [P] 编写 README.md 中文文档
 
   **目标**：项目简介、安装、开发、Built with、License、首次运行警告说明。
 
@@ -1909,7 +1909,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：四项指标均满足或在 acceptance-report.md 记录可接受偏差。
 
-- [ ] T114 [P] 自动化安全审计：Token 泄漏扫描 + 凭据残留检查
+- [x] T114 [P] 自动化安全审计：Token 泄漏扫描 + 凭据残留检查
 
   **目标**：spec SC-009 / SC-010 / SC-011 自动化验证。
 
@@ -1921,7 +1921,7 @@ commit message 提交成功；执行 push 远程更新。
 
   **验收标准**：脚本通过；CI 中可执行。
 
-- [ ] T115 [P] 编写 V2/V3/V4 路线图 stub `docs/roadmap.md`
+- [x] T115 [P] 编写 V2/V3/V4 路线图 stub `docs/roadmap.md`
 
   **目标**：明确 V1 不做什么，V2+ 何时做。
 
