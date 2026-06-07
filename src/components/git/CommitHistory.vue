@@ -1,19 +1,24 @@
 <!--
-  提交历史组件（T087 — US5 V1 简版）。
+  提交历史列表组件（远程 / 本地通用）。
 
-  V1 范围（与 spec 设计文档 §11.9 一致）：
-    - 简单列表展示 commit 摘要、作者、时间
-    - 分页加载(滚动到底部 -> 下一页)
-    - 暂不实现 graph 可视化、引用气泡等高级功能
+  泛化设计：父组件注入分页加载函数 `loadPage(page, pageSize)`（page 从 0 起），
+  组件内部负责滚动分页与选中高亮，点击某行通过 `select` 事件上抛 sha。
+  本地传 `git_log` 映射、远程传 `list_remote_commits` 映射，两端复用同一组件。
 
   使用：
-    <CommitHistory :repo-id="repoId" />
-    本组件自管理 commits 列表与分页状态,通过 props.repoId 调用 gitApi.log。
+    <CommitHistory :key="repoId" :load-page="loader" @select="onSelect" />
 -->
 <template>
   <div ref="containerRef" class="commit-history" @scroll="onScroll">
     <ul v-if="commits.length > 0" class="commit-list">
-      <li v-for="c in commits" :key="c.sha" class="commit-row" :title="c.message">
+      <li
+        v-for="c in commits"
+        :key="c.sha"
+        class="commit-row"
+        :class="{ selected: c.sha === selectedSha }"
+        :title="c.summary"
+        @click="onClickRow(c.sha)"
+      >
         <span class="sha">{{ c.shortSha }}</span>
         <span class="summary">{{ c.summary }}</span>
         <span class="author">{{ c.authorName }}</span>
@@ -32,43 +37,50 @@
 
 <script setup lang="ts">
 /**
- * CommitHistory 脚本（T087）。
- * 简化分页:监听容器 scroll,接近底部自动拉下一页;不做 IntersectionObserver。
+ * CommitHistory 脚本（泛化版）。
+ * 不再自己感知 repoId / 数据源：仅按 loadPage 分页拉取并维护选中态；
+ * 切换仓库由父组件用 `:key` 重建本组件触发重新加载，故无需 watch。
  */
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, ref } from 'vue';
 
-import { gitApi } from '@/api/git.api';
-import type { CommitInfo } from '@/types/git';
+import type { CommitSummary } from '@/types/git';
 
-/** 父组件传入仓库 id,变化时重置 list 重新加载第一页。 */
-const props = defineProps<{ repoId: string }>();
+/** 父组件注入的分页加载函数（page 从 0 起，返回该页提交列表）。 */
+const props = defineProps<{
+  loadPage: (page: number, pageSize: number) => Promise<CommitSummary[]>;
+}>();
+
+/** 选中某条提交 → 通知父组件展开其详情。 */
+const emit = defineEmits<{ (e: 'select', sha: string): void }>();
 
 /** 已加载的 commits 列表(append 模式) */
-const commits = ref<CommitInfo[]>([]);
+const commits = ref<CommitSummary[]>([]);
 /** 当前已加载的页码,从 0 起 */
 const page = ref(0);
-/** 单页大小,与后端默认对齐 */
-const pageSize = 50;
+/** 单页大小（远程/本地统一 30 条） */
+const pageSize = 30;
 /** 加载中标志,防并发 */
 const loading = ref(false);
 /** 是否已到底(上一页返回数量 < pageSize) */
 const reachedEnd = ref(false);
 /** 容器 ref:用于 scroll 监听 */
 const containerRef = ref<HTMLElement | null>(null);
+/** 当前选中行的 sha,用于高亮 */
+const selectedSha = ref<string | null>(null);
 
 /** 加载下一页;reachedEnd 时立即返回。 */
 async function loadNextPage(): Promise<void> {
-  if (loading.value || reachedEnd.value || !props.repoId) return;
+  if (loading.value || reachedEnd.value) return;
   loading.value = true;
   try {
-    const list = await gitApi.log(props.repoId, page.value, pageSize);
+    const list = await props.loadPage(page.value, pageSize);
     commits.value.push(...list);
     if (list.length < pageSize) reachedEnd.value = true;
     page.value += 1;
   } catch (e) {
     // 静默失败:不打扰用户,后续可由父组件加错误提示
     // eslint-disable-next-line no-console
-    console.error('git_log 加载失败:', e);
+    console.error('提交历史加载失败:', e);
   } finally {
     loading.value = false;
   }
@@ -84,21 +96,13 @@ function onScroll(): void {
   }
 }
 
-/** 切换仓库时重置分页与已加载列表。 */
-function reset(): void {
-  commits.value = [];
-  page.value = 0;
-  reachedEnd.value = false;
+/** 点击行:记录选中(高亮)并上抛 sha 给父组件。 */
+function onClickRow(sha: string): void {
+  selectedSha.value = sha;
+  emit('select', sha);
 }
 
-// repoId 变化:重置后重新加载;mounted 时触发首次加载
-watch(
-  () => props.repoId,
-  () => {
-    reset();
-    void loadNextPage();
-  },
-);
+// mounted 时触发首次加载;切换仓库由父用 :key 重建组件，自动重新走 mounted
 onMounted(() => {
   void loadNextPage();
 });
@@ -139,10 +143,14 @@ function pad(n: number): string {
   padding: 4px 8px; /* 行内边距 */
   font-size: 12px; /* 紧凑字号 */
   border-bottom: 1px solid var(--el-border-color-lighter); /* 分割线 */
-  cursor: default; /* 暂不支持点击,用默认光标 */
+  cursor: pointer; /* 可点击查看详情 */
 }
 .commit-row:hover {
   background: var(--el-fill-color-light); /* hover 浅背景 */
+}
+/* 选中行:主色浅背景突出当前查看的提交 */
+.commit-row.selected {
+  background: var(--el-color-primary-light-9);
 }
 
 /* sha 短码:等宽字体,主色调突出 */

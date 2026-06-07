@@ -5,7 +5,7 @@
 // =====================================================================
 
 import { invokeCmd } from './tauri';
-import type { Branch, CommitInfo, DiffResult, GitStatus } from '@/types/git';
+import type { Branch, CommitDetail, CommitInfo, DiffResult, GitStatus } from '@/types/git';
 
 export const gitApi = {
   // -------------------- 状态读取 --------------------
@@ -40,6 +40,11 @@ export const gitApi = {
       page: page ?? null,
       pageSize: pageSize ?? null,
     });
+  },
+
+  /** 获取单个提交的详情（元信息 + 改动文件 + 每文件 diff）。 */
+  commitDetail(repoId: string, sha: string): Promise<CommitDetail> {
+    return invokeCmd<CommitDetail>('git_commit_detail', { repoId, sha });
   },
 
   // -------------------- 暂存区操作 --------------------

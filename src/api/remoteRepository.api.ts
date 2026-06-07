@@ -4,6 +4,7 @@
 // =====================================================================
 
 import { invokeCmd } from './tauri';
+import type { CommitDetail, CommitPage } from '@/types/git';
 import type { RemoteRepository } from '@/types/repository';
 
 /** 远程仓库筛选条件。 */
@@ -40,5 +41,19 @@ export const remoteRepositoryApi = {
   /** 切换收藏状态。 */
   toggleFavorite(repoId: string): Promise<boolean> {
     return invokeCmd<boolean>('toggle_favorite_remote_repository', { repoId });
+  },
+
+  /** 拉取远程仓库提交历史（page 从 1 起、缺省每页 30）。 */
+  listCommits(repoId: string, page?: number, perPage?: number): Promise<CommitPage> {
+    return invokeCmd<CommitPage>('list_remote_commits', {
+      repoId,
+      page: page ?? null,
+      perPage: perPage ?? null,
+    });
+  },
+
+  /** 获取远程仓库单个提交的详情。 */
+  getCommitDetail(repoId: string, sha: string): Promise<CommitDetail> {
+    return invokeCmd<CommitDetail>('get_remote_commit_detail', { repoId, sha });
   },
 };

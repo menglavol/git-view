@@ -82,7 +82,19 @@
             <DiffViewer :result="diffResult" />
           </el-tab-pane>
           <el-tab-pane label="提交历史" name="history">
-            <CommitHistory :repo-id="repoId" />
+            <!-- 选中提交后展示详情面板（带返回），否则展示提交列表 -->
+            <div v-if="selectedCommitSha" class="commit-detail-wrap">
+              <el-button text size="small" class="back-btn" @click="backToCommitList">
+                ← 返回提交列表
+              </el-button>
+              <CommitDetailPanel :detail="commitDetail" :loading="commitDetailLoading" />
+            </div>
+            <CommitHistory
+              v-else
+              :key="repoId"
+              :load-page="loadLocalCommits"
+              @select="onSelectCommit"
+            />
           </el-tab-pane>
         </el-tabs>
       </main>
@@ -128,9 +140,17 @@ import GitFileChanges from '@/components/git/GitFileChanges.vue';
 import DiffViewer from '@/components/git/DiffViewer.vue';
 import CommitPanel from '@/components/git/CommitPanel.vue';
 import CommitHistory from '@/components/git/CommitHistory.vue';
+import CommitDetailPanel from '@/components/git/CommitDetailPanel.vue';
 import BranchSelector from '@/components/git/BranchSelector.vue';
 // 类型定义
-import type { Branch, DiffResult, FileChange, GitStatus } from '@/types/git';
+import type {
+  Branch,
+  CommitDetail,
+  CommitSummary,
+  DiffResult,
+  FileChange,
+  GitStatus,
+} from '@/types/git';
 import type { LocalRepository } from '@/types/repository';
 
 const route = useRoute();
@@ -164,6 +184,12 @@ const loadError = ref('');
 const busyAction = ref<'fetch' | 'pull' | 'push' | 'commit' | ''>('');
 /** 中栏 tab 状态:diff vs 提交历史 */
 const middleTab = ref<'diff' | 'history'>('diff');
+/** 提交历史中选中的提交 sha（null 显示列表，否则显示详情面板） */
+const selectedCommitSha = ref<string | null>(null);
+/** 选中提交的详情 */
+const commitDetail = ref<CommitDetail | null>(null);
+/** 提交详情加载中 */
+const commitDetailLoading = ref(false);
 /** CommitPanel ref,提交成功后调用其 reset() 清空输入 */
 const commitPanelRef = ref<InstanceType<typeof CommitPanel> | null>(null);
 
@@ -230,6 +256,40 @@ async function onViewDiff(path: string): Promise<void> {
   selectedFile.value = path;
   middleTab.value = 'diff';
   await reloadDiff();
+}
+
+/** 本地提交分页加载：git_log 映射为通用 CommitSummary 喂给 CommitHistory。 */
+async function loadLocalCommits(page: number, pageSize: number): Promise<CommitSummary[]> {
+  const list = await gitApi.log(repoId.value, page, pageSize);
+  // 本地 CommitInfo → CommitSummary（列表只需这几个字段；本地提交无 htmlUrl）
+  return list.map((c) => ({
+    sha: c.sha,
+    shortSha: c.shortSha,
+    summary: c.summary,
+    authorName: c.authorName,
+    authoredAt: c.authoredAt,
+  }));
+}
+
+/** 点击提交行：记录选中并加载其详情。 */
+async function onSelectCommit(sha: string): Promise<void> {
+  selectedCommitSha.value = sha;
+  commitDetailLoading.value = true;
+  commitDetail.value = null;
+  try {
+    commitDetail.value = await gitApi.commitDetail(repoId.value, sha);
+  } catch (e) {
+    ElMessage.error(`提交详情加载失败:${formatError(e)}`);
+    selectedCommitSha.value = null;
+  } finally {
+    commitDetailLoading.value = false;
+  }
+}
+
+/** 返回提交列表（清除选中与详情）。 */
+function backToCommitList(): void {
+  selectedCommitSha.value = null;
+  commitDetail.value = null;
 }
 
 /** stage 单文件:成功后刷新 status 与当前 diff（不改 selectedFile，避免正在看的 diff 被切走） */
@@ -426,6 +486,8 @@ onMounted(() => {
 watch(repoId, () => {
   selectedFile.value = null;
   diffResult.value = null;
+  selectedCommitSha.value = null;
+  commitDetail.value = null;
   void loadAll();
 });
 
@@ -505,6 +567,22 @@ watch(selectedFile, () => {
   display: flex; /* flex 用于嵌套 */
   flex-direction: column; /* 上为 tab header,下为内容 */
   min-height: 0; /* 允许内部滚动 */
+}
+
+/* 提交详情视图:返回按钮 + 详情面板纵向铺满并自滚动 */
+.commit-detail-wrap {
+  display: flex; /* 纵向布局 */
+  flex-direction: column; /* 返回按钮在上、详情在下 */
+  height: 100%; /* 占满 tab 内容区 */
+  min-height: 0; /* 允许详情面板内部滚动 */
+}
+.commit-detail-wrap .back-btn {
+  align-self: flex-start; /* 返回按钮靠左 */
+  margin-bottom: 4px; /* 与详情面板留间距 */
+}
+.commit-detail-wrap :deep(.commit-detail) {
+  flex: 1; /* 详情面板占满剩余高度 */
+  min-height: 0; /* 允许其内部 overflow 滚动 */
 }
 .middle-tabs :deep(.el-tabs__content) {
   flex: 1; /* 内容区占满 */
