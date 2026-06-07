@@ -22,6 +22,7 @@ export type GitViewErrorCode =
   | 'GitCommand'
   | 'GitNotFound'
   | 'PathConflict'
+  | 'RepoNameTaken'
   | 'PathMissing'
   | 'UserCancelled'
   | 'BusyAccount'
@@ -46,6 +47,7 @@ const ERROR_MESSAGES: Record<GitViewErrorCode, string> = {
   GitCommand: 'Git 命令执行失败',
   GitNotFound: '未找到 Git 可执行文件，请在设置中指定路径',
   PathConflict: '路径冲突，请选择其他目录',
+  RepoNameTaken: '该名称的仓库已存在，请改用其他名称',
   PathMissing: '路径不存在',
   UserCancelled: '操作已取消',
   BusyAccount: '该账号正在同步中，请稍后再试',

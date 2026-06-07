@@ -46,6 +46,10 @@
       </div>
       <!-- 网络操作按钮组:互斥控制避免并发 -->
       <div class="repo-actions">
+        <!-- 无 origin 远端时显示「发布到远程」入口（建空仓 + 关联 + push） -->
+        <el-button v-if="!remoteUrl" type="primary" @click="openPublishDialog">
+          发布到远程
+        </el-button>
         <el-button :loading="busyAction === 'fetch'" @click="runFetch">Fetch</el-button>
         <el-button :loading="busyAction === 'pull'" @click="runPull">Pull</el-button>
         <el-button type="primary" :loading="busyAction === 'push'" @click="runPush">Push</el-button>
@@ -113,6 +117,15 @@
     <!-- 加载/错误提示放底部,避免遮挡主体 -->
     <p v-if="loading && !status" class="loading-hint">正在加载仓库状态...</p>
     <p v-if="loadError" class="error-hint">{{ loadError }}</p>
+
+    <!-- 发布到远程对话框（仅无 origin 时通过顶栏按钮触发） -->
+    <PublishToRemoteDialog
+      v-model="publishDialogVisible"
+      :repo-id="repoId"
+      :default-name="repoLabel"
+      :current-branch="currentBranch || undefined"
+      @published="onPublished"
+    />
   </div>
 </template>
 
@@ -142,6 +155,7 @@ import CommitPanel from '@/components/git/CommitPanel.vue';
 import CommitHistory from '@/components/git/CommitHistory.vue';
 import CommitDetailPanel from '@/components/git/CommitDetailPanel.vue';
 import BranchSelector from '@/components/git/BranchSelector.vue';
+import PublishToRemoteDialog from '@/components/repository/PublishToRemoteDialog.vue';
 // 类型定义
 import type {
   Branch,
@@ -427,6 +441,22 @@ function handleNetworkError(kind: 'fetch' | 'pull' | 'push', e: unknown): void {
   }
   // 兜底:普通 toast
   ElMessage.error(`${kind.toUpperCase()} 失败:${msg}`);
+}
+
+// ============ 发布到远程 ============
+
+/** 发布对话框可见性（仅无 origin 远端时顶栏入口可用）。 */
+const publishDialogVisible = ref(false);
+
+/** 打开「发布到远程」对话框。 */
+function openPublishDialog(): void {
+  publishDialogVisible.value = true;
+}
+
+/** 发布成功后刷新本地仓库元信息（remoteUrl 更新后入口自动隐藏）与工作区状态。 */
+async function onPublished(): Promise<void> {
+  await localStore.fetchAll().catch(() => undefined);
+  await loadAll();
 }
 
 // ============ 分支切换 ============

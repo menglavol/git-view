@@ -5,7 +5,29 @@
 // =====================================================================
 
 import { invokeCmd } from './tauri';
-import type { BatchFetchSummary, LocalRepository, ScanResult } from '@/types/repository';
+import type {
+  BatchFetchSummary,
+  LocalRepository,
+  RemoteRepository,
+  ScanResult,
+  Visibility,
+} from '@/types/repository';
+
+/** 「发布到远程」命令参数。 */
+export interface PublishLocalRepoPayload {
+  /** 本地仓库 id（local_repositories.id） */
+  repoId: string;
+  /** 目标账户 id：决定发布到哪个平台、用谁的 token 建仓 */
+  accountId: string;
+  /** 远程仓库名（同时用作 GitLab 的 path） */
+  name: string;
+  /** 仓库描述，可空 */
+  description?: string;
+  /** 可见性：public / private / internal */
+  visibility: Visibility;
+  /** 关联协议：https 注入账户 token，ssh 走本机 key */
+  protocol: 'https' | 'ssh';
+}
 
 export const localRepositoryApi = {
   /** 添加单个本地仓库（路径由前端通过 dialog 选目录得到）。 */
@@ -54,5 +76,20 @@ export const localRepositoryApi = {
   /** 在系统终端中打开仓库目录。 */
   openTerminal(id: string): Promise<void> {
     return invokeCmd<void>('open_repository_in_terminal', { id });
+  },
+
+  /**
+   * 把一个尚无 origin 的本地仓库发布到远程平台：建空仓 → 关联 → push。
+   * 部分失败（远程已建成功但 push 失败）时后端不回滚，返回带进度说明的错误。
+   */
+  publish(payload: PublishLocalRepoPayload): Promise<RemoteRepository> {
+    return invokeCmd<RemoteRepository>('publish_local_repository', {
+      repoId: payload.repoId,
+      accountId: payload.accountId,
+      name: payload.name,
+      description: payload.description ?? null,
+      visibility: payload.visibility,
+      protocol: payload.protocol,
+    });
   },
 };

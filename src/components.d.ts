@@ -63,6 +63,7 @@ declare module 'vue' {
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     GitFileChanges: typeof import('./components/git/GitFileChanges.vue')['default']
     LocalRepoTable: typeof import('./components/repository/LocalRepoTable.vue')['default']
+    PublishToRemoteDialog: typeof import('./components/repository/PublishToRemoteDialog.vue')['default']
     RemoteRepoTable: typeof import('./components/repository/RemoteRepoTable.vue')['default']
     RepoDetailDrawer: typeof import('./components/repository/RepoDetailDrawer.vue')['default']
     RepoStatusOverview: typeof import('./components/repository/RepoStatusOverview.vue')['default']
