@@ -67,11 +67,15 @@ async fn scan_identifies_and_dedupes_repositories() {
 
     let pool = fresh_pool();
 
-    // 第一次扫描：应识别出 3 个仓库
+    // 第一次扫描：应识别出 3 个仓库（scan 返回 ScanResult，新增列表在 added 字段）
     let first = repository_service::scan_local_repositories(&pool, root_path, 5)
         .await
         .unwrap();
-    assert_eq!(first.len(), 3, "首次扫描应识别 3 个仓库，实际：{first:?}");
+    assert_eq!(
+        first.added.len(),
+        3,
+        "首次扫描应识别 3 个仓库，实际：{first:?}"
+    );
 
     // 列表查询同样应得到 3 条
     let listed = repository_service::list_local_repositories(&pool).unwrap();
