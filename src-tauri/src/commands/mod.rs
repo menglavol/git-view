@@ -11,6 +11,7 @@
 
 pub mod accounts;
 pub mod clone_tasks;
+pub mod data_dir;
 pub mod git;
 pub mod local_repositories;
 pub mod logs;

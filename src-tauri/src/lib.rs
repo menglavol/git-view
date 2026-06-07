@@ -237,6 +237,12 @@ pub fn run() {
             commands::accounts::check_credential_exists,
             commands::accounts::save_credential,
             commands::accounts::delete_credential,
+            // US7 应用数据目录迁移
+            commands::data_dir::get_data_dir,
+            commands::data_dir::migrate_data_dir,
+            commands::data_dir::get_old_data_dir,
+            commands::data_dir::delete_old_data_dir,
+            commands::data_dir::restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("启动 GitView 应用失败：Tauri Builder.run() 异常");

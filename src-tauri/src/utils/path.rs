@@ -114,12 +114,13 @@ pub fn join_safe(base: &Path, child: &str) -> Result<PathBuf> {
     }
 }
 
-/// 应用数据根目录：`<data_local_dir>/gitview`（日志与数据库都在此目录下）。
+/// 应用数据根目录（日志与数据库都在此目录下）。
+///
+/// 默认 `<data_local_dir>/gitview`，但用户可在设置里迁移到自定义目录；
+/// 实际位置由指针文件决定（见 `utils::data_dir::resolve_data_dir`）。
 #[must_use]
 pub fn app_data_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("gitview")
+    crate::utils::data_dir::resolve_data_dir()
 }
 
 /// 日志目录：`<app_data_dir>/logs`（tracing-appender 按天滚动写入此处）。

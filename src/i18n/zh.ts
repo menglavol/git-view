@@ -123,6 +123,26 @@ export const zh = {
       noOldLogs: '没有可清理的历史日志', // 无可删文件时提示
       clearFailed: '清理日志失败', // 失败 toast 前缀
       loadStatsFailed: '读取日志占用失败', // 统计失败 toast 前缀
+      // 应用数据目录（迁移 / 删除旧目录）
+      dataDirTitle: '应用数据目录', // 分区小标题
+      dataDirCurrent: '当前数据目录', // 只读路径标签
+      dataDirChange: '更改目录', // 选新目录按钮
+      migrateConfirmTitle: '迁移数据目录', // 迁移二次确认标题
+      migrateConfirmMessage:
+        '将把当前数据库与日志复制到「{dir}」。迁移后需重启应用才生效，且重启前的改动不会进入新目录。是否继续？', // 迁移二次确认正文
+      migrateSuccessTitle: '迁移完成', // 成功弹窗标题
+      migrateSuccessMessage:
+        '数据已复制到「{dir}」，需重启应用使新目录生效。旧目录已保留，可稍后手动删除。', // 成功弹窗正文
+      migrateFailed: '迁移失败', // 失败 toast 前缀
+      restartNow: '立即重启', // 成功弹窗确认按钮
+      restartLater: '稍后', // 成功弹窗取消按钮
+      loadDataDirFailed: '读取数据目录失败', // 加载失败 toast 前缀
+      oldDir: '旧数据目录', // 旧目录行标签
+      deleteOldDir: '删除旧目录', // 删除旧目录按钮
+      deleteOldConfirmTitle: '删除旧数据目录', // 删除二次确认标题
+      deleteOldConfirmMessage: '将永久删除旧数据目录「{dir}」，此操作不可恢复。确认删除？', // 删除二次确认正文
+      deleteOldSuccess: '旧数据目录已删除', // 删除成功 toast
+      deleteOldFailed: '删除旧目录失败', // 删除失败 toast 前缀
     },
     // 账号与安全 Tab：凭据状态与重新验证 / 删除凭据流程
     security: {

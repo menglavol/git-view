@@ -5,7 +5,15 @@
 // =====================================================================
 
 import { invokeCmd } from './tauri';
-import type { ClearLogsResult, GitDetectionResult, LogStats, Settings } from '@/types/settings';
+import type {
+  ClearLogsResult,
+  DataDirInfo,
+  GitDetectionResult,
+  LogStats,
+  MigrateResult,
+  OldDataDir,
+  Settings,
+} from '@/types/settings';
 
 /**
  * 设置相关 API 集合。
@@ -41,5 +49,30 @@ export const settingsApi = {
   /** 清理历史日志（保留当天、删除更早的滚动文件），返回删除数与释放字节。 */
   clearOldLogs(): Promise<ClearLogsResult> {
     return invokeCmd<ClearLogsResult>('clear_old_logs');
+  },
+
+  /** 读取当前数据目录信息（当前路径 + 是否存在待删旧目录）。 */
+  getDataDir(): Promise<DataDirInfo> {
+    return invokeCmd<DataDirInfo>('get_data_dir');
+  },
+
+  /** 迁移数据目录：把当前 DB + 日志复制到 newDir，更新指针（需重启生效）。 */
+  migrateDataDir(newDir: string): Promise<MigrateResult> {
+    return invokeCmd<MigrateResult>('migrate_data_dir', { newDir });
+  },
+
+  /** 读取旧数据目录占用（路径 + 大小 + 文件数）；无旧目录时返回 null。 */
+  getOldDataDir(): Promise<OldDataDir | null> {
+    return invokeCmd<OldDataDir | null>('get_old_data_dir');
+  },
+
+  /** 删除旧数据目录并清空指针 previousDir。 */
+  deleteOldDataDir(): Promise<void> {
+    return invokeCmd<void>('delete_old_data_dir');
+  },
+
+  /** 重启应用（迁移后使新数据目录生效）。 */
+  restartApp(): Promise<void> {
+    return invokeCmd<void>('restart_app');
   },
 };

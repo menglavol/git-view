@@ -67,18 +67,14 @@ impl DbPool {
         })
     }
 
-    /// 获取默认数据库路径。
+    /// 获取数据库文件路径：数据目录下的 `gitview.db`。
     ///
-    /// 路径规则：
-    ///   - macOS: `~/Library/Application Support/gitview/gitview.db`
-    ///   - Windows: `%LOCALAPPDATA%/gitview/gitview.db`
-    ///   - Linux: `~/.local/share/gitview/gitview.db`
+    /// 数据目录默认 `<data_local_dir>/gitview`（macOS `~/Library/Application
+    /// Support`、Windows `%LOCALAPPDATA%`、Linux `~/.local/share`），但可被用户
+    /// 迁移到自定义位置——实际位置由指针文件决定（见 `utils::path::app_data_dir`）。
     #[must_use]
     pub fn default_path() -> PathBuf {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("gitview")
-            .join("gitview.db")
+        crate::utils::path::app_data_dir().join("gitview.db")
     }
 
     /// 以闭包方式访问数据库连接。

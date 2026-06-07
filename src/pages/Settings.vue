@@ -99,6 +99,45 @@
             <el-switch v-model="form.general.autoCheckRepoStatus" />
           </el-form-item>
 
+          <!-- 应用数据目录分区：展示当前数据目录、迁移到新目录、删除旧目录 -->
+          <el-divider content-position="left">
+            {{ t('settings.storage.dataDirTitle') }}
+          </el-divider>
+
+          <!-- 当前数据目录：只读路径 + 更改目录（选目录→二次确认→迁移→引导重启） -->
+          <el-form-item :label="t('settings.storage.dataDirCurrent')">
+            <!-- 只读：数据目录不能直接编辑，必须经「更改目录」走复制迁移流程 -->
+            <el-input :model-value="dataDirInfo?.current ?? ''" readonly>
+              <template #append>
+                <!-- 内联「更改目录」，与日志目录的「刷新」按钮位置保持一致 -->
+                <el-button :loading="migrating" @click="changeDataDir">
+                  {{ t('settings.storage.dataDirChange') }}
+                </el-button>
+              </template>
+            </el-input>
+          </el-form-item>
+
+          <!-- 旧数据目录：迁移后保留，显示路径 + 占用 + 删除按钮（存在才渲染） -->
+          <el-form-item v-if="oldDataDir" :label="t('settings.storage.oldDir')">
+            <!-- 旧目录绝对路径：迁移的来源，保留待用户确认无误后再删 -->
+            <span>{{ oldDataDir.dir }}</span>
+            <!-- 占用大小 · 文件数：给用户删除前的体量参考 -->
+            <span class="field-hint">
+              {{ formatBytes(oldDataDir.sizeBytes) }} · {{ oldDataDir.fileCount }}
+              {{ t('settings.storage.fileCountUnit') }}
+            </span>
+            <!-- 危险操作：永久删除旧目录，复用清理按钮的右对齐间距样式 -->
+            <el-button
+              type="danger"
+              plain
+              class="clear-logs-btn"
+              :loading="deletingOld"
+              @click="deleteOldDir"
+            >
+              {{ t('settings.storage.deleteOldDir') }}
+            </el-button>
+          </el-form-item>
+
           <!-- 日志与存储分区：展示日志目录占用并提供清理（与设置快照无关，独立 IPC） -->
           <el-divider content-position="left">
             {{ t('settings.storage.sectionTitle') }}
@@ -106,8 +145,10 @@
 
           <!-- 日志目录：只读绝对路径 + 刷新统计 -->
           <el-form-item :label="t('settings.storage.logDir')">
+            <!-- 只读：日志目录跟随数据目录，不单独配置 -->
             <el-input :model-value="logStats?.dir ?? ''" readonly>
               <template #append>
+                <!-- 重新统计占用（清理后或外部写入后手动刷新） -->
                 <el-button :loading="loadingStats" @click="loadLogStats">
                   {{ t('settings.storage.refresh') }}
                 </el-button>
@@ -117,12 +158,15 @@
 
           <!-- 日志占用：大小 + 文件数 + 清理按钮；无文件时禁用清理 -->
           <el-form-item :label="t('settings.storage.logUsage')">
+            <!-- 占用大小：未加载时占位破折号 -->
             <span class="log-usage-text">
               {{ logStats ? formatBytes(logStats.sizeBytes) : '—' }}
             </span>
+            <!-- 文件数：含当天与历史滚动日志 -->
             <span class="field-hint">
               {{ logStats?.fileCount ?? 0 }} {{ t('settings.storage.fileCountUnit') }}
             </span>
+            <!-- 清理历史日志：仅保留当天，无文件时禁用 -->
             <el-button
               type="warning"
               plain
@@ -412,9 +456,12 @@ import { useAppStore } from '@/stores/app';
 import { useSettingsStore } from '@/stores/settings';
 import type { Account, GitPlatform } from '@/types/account';
 import type {
+  DataDirInfo,
   GeneralSettings,
   GitDetectionResult,
   LogStats,
+  MigrateResult,
+  OldDataDir,
   PullStrategy,
   PushStrategy,
   Settings,
@@ -468,6 +515,14 @@ const logStats = ref<LogStats | null>(null);
 const loadingStats = ref(false);
 // 清理历史日志进行中（清理按钮 loading，防重复点击）。
 const clearingLogs = ref(false);
+// 当前数据目录信息（null 表示尚未加载）。
+const dataDirInfo = ref<DataDirInfo | null>(null);
+// 迁移后保留的旧数据目录占用（null 表示无旧目录）。
+const oldDataDir = ref<OldDataDir | null>(null);
+// 数据目录迁移进行中（更改按钮 loading）。
+const migrating = ref(false);
+// 删除旧目录进行中（删除按钮 loading）。
+const deletingOld = ref(false);
 // 账号凭据状态映射；账号与安全 Tab 首次激活时填充。
 const credStatus = reactive<Record<string, CredState>>({});
 // 账号与安全 Tab 是否已加载过（避免每次切 Tab 都重复请求）。
@@ -685,6 +740,114 @@ async function onClearLogs(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------
+// 应用数据目录（迁移 / 删除旧目录）
+// ---------------------------------------------------------------------
+
+/** 读取当前数据目录信息；若存在旧目录则一并加载其占用。 */
+async function loadDataDir(): Promise<void> {
+  // 数据目录信息（当前路径 + 旧目录）与设置快照解耦，单独经 IPC 拉取
+  try {
+    dataDirInfo.value = await settingsApi.getDataDir();
+    // 有旧目录才查占用（统计需遍历目录，按需加载）
+    oldDataDir.value = dataDirInfo.value.previous ? await settingsApi.getOldDataDir() : null;
+  } catch (e) {
+    ElMessage.error(
+      `${t('settings.storage.loadDataDirFailed')}：${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+}
+
+/**
+ * 更改数据目录：选目录 → 二次确认 → 迁移 → 引导重启。
+ *
+ * 迁移是复制（旧目录保留）；运行中的 DB / 日志无法热切换，必须重启才生效，
+ * 且重启前的改动不会进入新目录，故确认与成功提示都强调这一点。
+ */
+async function changeDataDir(): Promise<void> {
+  const selected = await openDialog({ directory: true, multiple: false });
+  // 用户取消返回 null；只接受单字符串路径
+  if (typeof selected !== 'string') return;
+  try {
+    await ElMessageBox.confirm(
+      t('settings.storage.migrateConfirmMessage', { dir: selected }),
+      t('settings.storage.migrateConfirmTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+      },
+    );
+  } catch {
+    return; // 用户取消迁移
+  }
+  // 进入迁移中：禁用「更改目录」按钮，避免复制期间重复触发
+  migrating.value = true;
+  try {
+    const result = await settingsApi.migrateDataDir(selected);
+    await promptRestart(result); // 迁移成功，引导重启
+  } catch (e) {
+    ElMessage.error(
+      `${t('settings.storage.migrateFailed')}：${e instanceof Error ? e.message : String(e)}`,
+    );
+  } finally {
+    migrating.value = false;
+  }
+}
+
+/** 迁移成功后弹窗：点「立即重启」调 restartApp，点「稍后」仅刷新旧目录显示。 */
+async function promptRestart(result: MigrateResult): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      t('settings.storage.migrateSuccessMessage', { dir: result.newDir }),
+      t('settings.storage.migrateSuccessTitle'),
+      {
+        type: 'success',
+        confirmButtonText: t('settings.storage.restartNow'),
+        cancelButtonText: t('settings.storage.restartLater'),
+        // 禁止点遮罩关闭：重启是重要决策，强制用户在「立即 / 稍后」间显式选择
+        closeOnClickModal: false,
+      },
+    );
+    await settingsApi.restartApp(); // 进程随即重启，后续代码不会执行
+  } catch {
+    // 用户选择稍后重启：刷新数据目录信息，让旧目录区显示出来
+    await loadDataDir();
+  }
+}
+
+/** 删除旧数据目录：危险二次确认 → 删除 → 隐藏旧目录区。 */
+async function deleteOldDir(): Promise<void> {
+  const dir = oldDataDir.value?.dir;
+  if (!dir) return;
+  try {
+    await ElMessageBox.confirm(
+      t('settings.storage.deleteOldConfirmMessage', { dir }),
+      t('settings.storage.deleteOldConfirmTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('settings.storage.deleteOldDir'),
+        cancelButtonText: t('common.cancel'),
+      },
+    );
+  } catch {
+    return; // 用户取消删除
+  }
+  // 进入删除中：禁用删除按钮防重复点击
+  deletingOld.value = true;
+  try {
+    await settingsApi.deleteOldDataDir();
+    oldDataDir.value = null; // 删除后隐藏旧目录区
+    ElMessage.success(t('settings.storage.deleteOldSuccess'));
+  } catch (e) {
+    ElMessage.error(
+      `${t('settings.storage.deleteOldFailed')}：${e instanceof Error ? e.message : String(e)}`,
+    );
+  } finally {
+    deletingOld.value = false;
+  }
+}
+
+// ---------------------------------------------------------------------
 // 顶部保存 / 重置
 // ---------------------------------------------------------------------
 
@@ -809,8 +972,9 @@ onMounted(async () => {
     // 加载失败：保留首屏默认表单，给出提示，用户可切走再回重试
     ElMessage.error(`${t('settings.loadFailed')}：${e instanceof Error ? e.message : String(e)}`);
   }
-  // 日志占用与设置快照解耦，单独拉取；失败已在内部提示，不影响设置加载
+  // 日志占用与数据目录信息均与设置快照解耦，单独拉取；失败已在内部提示
   await loadLogStats();
+  await loadDataDir();
 });
 </script>
 

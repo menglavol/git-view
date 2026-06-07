@@ -124,6 +124,27 @@ export const en = {
       noOldLogs: 'No old logs to clear', // 无可删文件时提示
       clearFailed: 'Failed to clear logs', // 失败 toast 前缀
       loadStatsFailed: 'Failed to read log usage', // 统计失败 toast 前缀
+      // 应用数据目录（迁移 / 删除旧目录）
+      dataDirTitle: 'Application data directory', // 分区小标题
+      dataDirCurrent: 'Current data directory', // 只读路径标签
+      dataDirChange: 'Change directory', // 选新目录按钮
+      migrateConfirmTitle: 'Migrate data directory', // 迁移二次确认标题
+      migrateConfirmMessage:
+        'The current database and logs will be copied to "{dir}". A restart is required to take effect, and changes made before restarting will not be included in the new directory. Continue?', // 迁移二次确认正文
+      migrateSuccessTitle: 'Migration complete', // 成功弹窗标题
+      migrateSuccessMessage:
+        'Data copied to "{dir}". Restart the app to use the new directory. The old directory is kept and can be deleted later.', // 成功弹窗正文
+      migrateFailed: 'Migration failed', // 失败 toast 前缀
+      restartNow: 'Restart now', // 成功弹窗确认按钮
+      restartLater: 'Later', // 成功弹窗取消按钮
+      loadDataDirFailed: 'Failed to read data directory', // 加载失败 toast 前缀
+      oldDir: 'Old data directory', // 旧目录行标签
+      deleteOldDir: 'Delete old directory', // 删除旧目录按钮
+      deleteOldConfirmTitle: 'Delete old data directory', // 删除二次确认标题
+      deleteOldConfirmMessage:
+        'This will permanently delete the old data directory "{dir}". This cannot be undone. Confirm?', // 删除二次确认正文
+      deleteOldSuccess: 'Old data directory deleted', // 删除成功 toast
+      deleteOldFailed: 'Failed to delete old directory', // 删除失败 toast 前缀
     },
     // 账号与安全 Tab：凭据状态与重新验证 / 删除凭据流程
     security: {

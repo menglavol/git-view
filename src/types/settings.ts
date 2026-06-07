@@ -120,6 +120,40 @@ export interface ClearLogsResult {
 }
 
 /**
+ * 当前数据目录信息（get_data_dir 返回，对应后端 DataDirInfo）。
+ *
+ * current 为当前生效的数据目录；previous 为迁移后保留的旧目录（无则为 null）。
+ */
+export interface DataDirInfo {
+  /** 当前生效的数据目录绝对路径 */
+  current: string;
+  /** 迁移后保留的旧目录路径（无则为 null） */
+  previous: string | null;
+}
+
+/**
+ * 数据目录迁移结果（migrate_data_dir 返回，对应后端 MigrateResult）。
+ */
+export interface MigrateResult {
+  /** 迁移后的新数据目录绝对路径 */
+  newDir: string;
+  /** 被保留的旧数据目录绝对路径（待手动删除） */
+  previousDir: string;
+}
+
+/**
+ * 旧数据目录占用统计（get_old_data_dir 返回，对应后端 OldDataDir）。
+ */
+export interface OldDataDir {
+  /** 旧目录绝对路径 */
+  dir: string;
+  /** 旧目录内所有文件的总字节数 */
+  sizeBytes: number;
+  /** 旧目录文件个数 */
+  fileCount: number;
+}
+
+/**
  * Git 环境检测结果（detect_git / set_git_path 返回）。
  *
  * 以 `found` 表达「是否检测到 git」：未装 git 是可处理的正常状态，

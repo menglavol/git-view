@@ -15,6 +15,7 @@
 pub mod account_service;
 pub mod clone_task_service;
 pub mod credential_service;
+pub mod data_dir_service;
 pub mod git_cli_service;
 pub mod git_reader_service;
 pub mod gitee_service;
