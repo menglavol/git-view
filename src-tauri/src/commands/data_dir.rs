@@ -16,7 +16,7 @@ use crate::services::data_dir_service::{self, MigrateResult, OldDataDir};
 use crate::utils::path::app_data_dir;
 use crate::AppState;
 
-/// 当前数据目录信息（当前生效目录 + 可选的待删旧目录路径）。
+/// 当前数据目录信息（当前生效目录 + 可选的待删旧目录路径 + 是否为默认目录）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataDirInfo {
@@ -24,9 +24,11 @@ pub struct DataDirInfo {
     pub current: String,
     /// 迁移后保留的旧目录路径（无则为 None）
     pub previous: Option<String>,
+    /// 当前目录是否就是应用默认目录（前端据此禁用「恢复默认」）
+    pub is_default: bool,
 }
 
-/// 读取当前数据目录信息（当前路径 + 是否存在待删旧目录）。
+/// 读取当前数据目录信息（当前路径 + 是否存在待删旧目录 + 是否已是默认目录）。
 ///
 /// 旧目录仅取路径并校验仍存在；占用统计较重，按需走 `get_old_data_dir`。
 #[tauri::command]
@@ -37,7 +39,13 @@ pub fn get_data_dir() -> DataDirInfo {
     let previous = crate::utils::data_dir::read_pointer()
         .and_then(|p| p.previous_dir)
         .filter(|p| Path::new(p).is_dir());
-    DataDirInfo { current, previous }
+    // 已在默认目录时，前端隐藏 / 禁用「恢复默认」按钮
+    let is_default = data_dir_service::is_default_data_dir();
+    DataDirInfo {
+        current,
+        previous,
+        is_default,
+    }
 }
 
 /// 迁移数据目录：把当前 DB + 日志复制到 `new_dir`，更新指针，旧目录保留。
@@ -46,6 +54,14 @@ pub fn get_data_dir() -> DataDirInfo {
 #[tauri::command]
 pub fn migrate_data_dir(state: State<'_, AppState>, new_dir: String) -> Result<MigrateResult> {
     data_dir_service::migrate(&state.db, &PathBuf::from(new_dir))
+}
+
+/// 恢复到应用默认数据目录：把当前数据复制回 `<data_local_dir>/gitview`。
+///
+/// 默认目录已有旧数据时会被覆盖（清理后复制）；迁移后需重启生效，指针随之更新。
+#[tauri::command]
+pub fn restore_default_data_dir(state: State<'_, AppState>) -> Result<MigrateResult> {
+    data_dir_service::restore_default(&state.db)
 }
 
 /// 读取旧数据目录占用（路径 + 大小 + 文件数）；无旧目录时返回 `None`。

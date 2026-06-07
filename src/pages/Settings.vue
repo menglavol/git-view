@@ -117,6 +117,14 @@
             </el-input>
           </el-form-item>
 
+          <!-- 恢复默认目录：仅当前不在默认目录时显示（把数据复制回默认位置） -->
+          <el-form-item v-if="dataDirInfo && !dataDirInfo.isDefault" label=" ">
+            <el-button :loading="restoring" @click="restoreDefault">
+              {{ t('settings.storage.dataDirRestore') }}
+            </el-button>
+            <span class="field-hint">{{ t('settings.storage.dataDirRestoreHint') }}</span>
+          </el-form-item>
+
           <!-- 旧数据目录：迁移后保留，显示路径 + 占用 + 删除按钮（存在才渲染） -->
           <el-form-item v-if="oldDataDir" :label="t('settings.storage.oldDir')">
             <!-- 旧目录绝对路径：迁移的来源，保留待用户确认无误后再删 -->
@@ -523,6 +531,8 @@ const oldDataDir = ref<OldDataDir | null>(null);
 const migrating = ref(false);
 // 删除旧目录进行中（删除按钮 loading）。
 const deletingOld = ref(false);
+// 恢复默认目录进行中（恢复按钮 loading）。
+const restoring = ref(false);
 // 账号凭据状态映射；账号与安全 Tab 首次激活时填充。
 const credStatus = reactive<Record<string, CredState>>({});
 // 账号与安全 Tab 是否已加载过（避免每次切 Tab 都重复请求）。
@@ -812,6 +822,39 @@ async function promptRestart(result: MigrateResult): Promise<void> {
   } catch {
     // 用户选择稍后重启：刷新数据目录信息，让旧目录区显示出来
     await loadDataDir();
+  }
+}
+
+/**
+ * 恢复默认数据目录：二次确认 → 把当前数据复制回默认目录 → 引导重启。
+ *
+ * 默认目录已有旧数据会被覆盖（后端清理后复制），故确认文案强调覆盖与重启。
+ */
+async function restoreDefault(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      t('settings.storage.restoreConfirmMessage'),
+      t('settings.storage.restoreConfirmTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+      },
+    );
+  } catch {
+    return; // 用户取消恢复
+  }
+  // 进入恢复中：禁用「恢复默认」按钮防重复触发
+  restoring.value = true;
+  try {
+    const result = await settingsApi.restoreDefaultDataDir();
+    await promptRestart(result); // 复用迁移成功的重启引导
+  } catch (e) {
+    ElMessage.error(
+      `${t('settings.storage.restoreFailed')}：${e instanceof Error ? e.message : String(e)}`,
+    );
+  } finally {
+    restoring.value = false;
   }
 }
 

@@ -17,7 +17,7 @@ use walkdir::WalkDir;
 
 use crate::db::pool::DbPool;
 use crate::errors::{GitViewError, Result};
-use crate::utils::data_dir::{read_pointer, write_pointer, DataDirPointer};
+use crate::utils::data_dir::{default_data_dir, read_pointer, write_pointer, DataDirPointer};
 use crate::utils::path::app_data_dir;
 
 /// 数据库主文件名（WAL/SHM 旁文件在此基础上加 `-wal`/`-shm` 后缀）。
@@ -56,7 +56,7 @@ pub struct OldDataDir {
 pub fn migrate(db: &DbPool, new_dir: &Path) -> Result<MigrateResult> {
     let current = app_data_dir();
 
-    // ---- 1. 目标目录校验 ----
+    // ---- 目标目录校验 ----
     // 不存在则先建出来，随后 canonicalize 需要真实路径
     std::fs::create_dir_all(new_dir)?;
     let new_canon = dunce::canonicalize(new_dir)
@@ -76,42 +76,110 @@ pub fn migrate(db: &DbPool, new_dir: &Path) -> Result<MigrateResult> {
             "新目录不能位于当前数据目录内部".to_string(),
         ));
     }
-    // 目标已有 gitview.db → 报错拒绝（绝不覆盖既有数据）
-    if new_canon.join(DB_FILE).exists() {
+    // 迁移到全新目录：不允许覆盖（overwrite=false），目标已有 db 会被拒绝
+    perform_migration(db, &current_canon, &new_canon, false)
+}
+
+/// 恢复到应用默认数据目录（`<data_local_dir>/gitview`），更新指针，旧目录保留。
+///
+/// 与 `migrate` 的区别：目标固定为默认目录，且**允许覆盖**默认目录里的旧数据
+/// （当初迁移前留下的快照已过时，当前数据才是最新），覆盖前会清理旧 DB 与 logs。
+///
+/// # Errors
+///
+/// 当前已是默认目录（无需恢复）、复制失败或写指针失败时返回错误；失败时指针不动。
+pub fn restore_default(db: &DbPool) -> Result<MigrateResult> {
+    let current = app_data_dir();
+    let current_canon = dunce::canonicalize(&current).unwrap_or_else(|_| current.clone());
+
+    let default = default_data_dir();
+    std::fs::create_dir_all(&default)?;
+    let default_canon = dunce::canonicalize(&default).unwrap_or_else(|_| default.clone());
+
+    // 已在默认目录 → 无需恢复
+    if current_canon == default_canon {
+        return Err(GitViewError::PathConflict(
+            "当前已是默认数据目录，无需恢复".to_string(),
+        ));
+    }
+    // 恢复 = 用当前数据覆盖默认目录（overwrite=true）
+    perform_migration(db, &current_canon, &default_canon, true)
+}
+
+/// 当前数据目录是否就是应用默认目录（供前端决定是否启用「恢复默认」）。
+#[must_use]
+pub fn is_default_data_dir() -> bool {
+    let current = app_data_dir();
+    let default = default_data_dir();
+    // 两者都规范化后比较；目录不存在时 canonicalize 失败，兜底用原路径
+    let c = dunce::canonicalize(&current).unwrap_or(current);
+    let d = dunce::canonicalize(&default).unwrap_or(default);
+    c == d
+}
+
+/// 迁移核心：可写探测 → 处理目标已有数据 → WAL checkpoint → 复制 → 写指针。
+///
+/// `overwrite=false`（迁移到新目录）时目标已含 `gitview.db` 直接报错；
+/// `overwrite=true`（恢复默认）时先清理目标里的旧 DB 与 logs 再复制。
+/// 调用方须保证 `current` / `target` 已规范化且 `target != current`。
+///
+/// # Errors
+///
+/// 不可写、目标冲突、WAL checkpoint、复制或写指针失败时返回错误。
+fn perform_migration(
+    db: &DbPool,
+    current: &Path,
+    target: &Path,
+    overwrite: bool,
+) -> Result<MigrateResult> {
+    // 探测可写：写一个临时文件再删（捕捉权限 / 只读盘问题）
+    let probe = target.join(".gitview_write_probe");
+    std::fs::write(&probe, b"probe")?;
+    let _ = std::fs::remove_file(&probe);
+
+    if overwrite {
+        // 恢复场景：先清理目标里的旧应用数据，避免与当前数据混杂
+        for name in [DB_FILE, "gitview.db-wal", "gitview.db-shm"] {
+            let p = target.join(name);
+            if p.exists() {
+                std::fs::remove_file(&p)?;
+            }
+        }
+        let old_logs = target.join("logs");
+        if old_logs.is_dir() {
+            std::fs::remove_dir_all(&old_logs)?;
+        }
+    } else if target.join(DB_FILE).exists() {
+        // 迁移到新目录场景：目标已有 db 直接拒绝，绝不覆盖既有数据
         return Err(GitViewError::PathConflict(format!(
             "目标目录已存在 {DB_FILE}，请选择空目录或先清理"
         )));
     }
-    // 探测可写：写一个临时文件再删（捕捉权限 / 只读盘问题）
-    let probe = new_canon.join(".gitview_write_probe");
-    std::fs::write(&probe, b"probe")?;
-    let _ = std::fs::remove_file(&probe);
 
-    // ---- 2. WAL checkpoint：把 -wal 内容落盘并截断，保证复制到一致状态 ----
+    // WAL checkpoint：把 -wal 内容落盘并截断，保证复制到一致状态
     db.with_conn(|conn| {
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
             .map_err(|e| GitViewError::Database(format!("WAL checkpoint 失败：{e}")))?;
         Ok(())
     })?;
 
-    // ---- 3. 复制 DB 主文件 + WAL/SHM 旁文件 ----
-    // checkpoint(TRUNCATE) 后 -wal 通常为空甚至不存在，故旁文件「存在才复制」
+    // 复制 DB 主文件 + WAL/SHM 旁文件（checkpoint 后 -wal 可能为空，存在才复制）
     for name in [DB_FILE, "gitview.db-wal", "gitview.db-shm"] {
-        let src = current_canon.join(name);
+        let src = current.join(name);
         if src.exists() {
-            std::fs::copy(&src, new_canon.join(name))?;
+            std::fs::copy(&src, target.join(name))?;
         }
     }
 
-    // ---- 4. 递归复制 logs/ 目录（不存在则跳过）----
-    let src_logs = current_canon.join("logs");
+    // 递归复制 logs/ 目录（不存在则跳过）
+    let src_logs = current.join("logs");
     if src_logs.is_dir() {
-        copy_dir_recursive(&src_logs, &new_canon.join("logs"))?;
+        copy_dir_recursive(&src_logs, &target.join("logs"))?;
     }
 
-    // ---- 5. 更新指针：dataDir=新，previousDir=旧（最后一步，前面失败则指针不动）----
-    let new_str = new_canon.to_string_lossy().into_owned();
-    let prev_str = current_canon.to_string_lossy().into_owned();
+    // 更新指针：dataDir=目标，previousDir=当前（最后一步，前面失败则指针不动）
+    let new_str = target.to_string_lossy().into_owned();
+    let prev_str = current.to_string_lossy().into_owned();
     write_pointer(&DataDirPointer {
         data_dir: new_str.clone(),
         previous_dir: Some(prev_str.clone()),

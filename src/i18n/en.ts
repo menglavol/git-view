@@ -145,6 +145,12 @@ export const en = {
         'This will permanently delete the old data directory "{dir}". This cannot be undone. Confirm?', // 删除二次确认正文
       deleteOldSuccess: 'Old data directory deleted', // 删除成功 toast
       deleteOldFailed: 'Failed to delete old directory', // 删除失败 toast 前缀
+      dataDirRestore: 'Restore default directory', // 恢复默认按钮
+      dataDirRestoreHint: 'Copy data back to the default directory', // 恢复按钮旁说明
+      restoreConfirmTitle: 'Restore default data directory', // 恢复二次确认标题
+      restoreConfirmMessage:
+        'The current data will be copied back to the default directory. Existing data there will be overwritten. A restart is required to take effect, and changes made before restarting will not be included. Continue?', // 恢复二次确认正文
+      restoreFailed: 'Restore failed', // 恢复失败 toast 前缀
     },
     // 账号与安全 Tab：凭据状态与重新验证 / 删除凭据流程
     security: {

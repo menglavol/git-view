@@ -61,6 +61,11 @@ export const settingsApi = {
     return invokeCmd<MigrateResult>('migrate_data_dir', { newDir });
   },
 
+  /** 恢复到应用默认数据目录（把当前数据复制回默认目录，需重启生效）。 */
+  restoreDefaultDataDir(): Promise<MigrateResult> {
+    return invokeCmd<MigrateResult>('restore_default_data_dir');
+  },
+
   /** 读取旧数据目录占用（路径 + 大小 + 文件数）；无旧目录时返回 null。 */
   getOldDataDir(): Promise<OldDataDir | null> {
     return invokeCmd<OldDataDir | null>('get_old_data_dir');

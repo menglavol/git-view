@@ -240,6 +240,7 @@ pub fn run() {
             // US7 应用数据目录迁移
             commands::data_dir::get_data_dir,
             commands::data_dir::migrate_data_dir,
+            commands::data_dir::restore_default_data_dir,
             commands::data_dir::get_old_data_dir,
             commands::data_dir::delete_old_data_dir,
             commands::data_dir::restart_app,

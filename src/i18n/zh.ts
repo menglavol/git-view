@@ -143,6 +143,12 @@ export const zh = {
       deleteOldConfirmMessage: '将永久删除旧数据目录「{dir}」，此操作不可恢复。确认删除？', // 删除二次确认正文
       deleteOldSuccess: '旧数据目录已删除', // 删除成功 toast
       deleteOldFailed: '删除旧目录失败', // 删除失败 toast 前缀
+      dataDirRestore: '恢复默认目录', // 恢复默认按钮
+      dataDirRestoreHint: '把数据复制回应用默认目录', // 恢复按钮旁说明
+      restoreConfirmTitle: '恢复默认数据目录', // 恢复二次确认标题
+      restoreConfirmMessage:
+        '将把当前数据复制回应用默认目录。若默认目录已存在旧数据将被覆盖。迁移后需重启应用才生效，且重启前的改动不会进入默认目录。是否继续？', // 恢复二次确认正文
+      restoreFailed: '恢复失败', // 恢复失败 toast 前缀
     },
     // 账号与安全 Tab：凭据状态与重新验证 / 删除凭据流程
     security: {

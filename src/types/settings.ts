@@ -129,6 +129,8 @@ export interface DataDirInfo {
   current: string;
   /** 迁移后保留的旧目录路径（无则为 null） */
   previous: string | null;
+  /** 当前目录是否就是应用默认目录（用于禁用「恢复默认」） */
+  isDefault: boolean;
 }
 
 /**
