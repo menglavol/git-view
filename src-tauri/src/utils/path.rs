@@ -114,6 +114,20 @@ pub fn join_safe(base: &Path, child: &str) -> Result<PathBuf> {
     }
 }
 
+/// 应用数据根目录：`<data_local_dir>/gitview`（日志与数据库都在此目录下）。
+#[must_use]
+pub fn app_data_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("gitview")
+}
+
+/// 日志目录：`<app_data_dir>/logs`（tracing-appender 按天滚动写入此处）。
+#[must_use]
+pub fn log_dir() -> PathBuf {
+    app_data_dir().join("logs")
+}
+
 // =====================================================================
 // 单元测试
 // =====================================================================

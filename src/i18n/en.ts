@@ -107,6 +107,24 @@ export const en = {
       terminal: 'Default terminal command',
       fileManager: 'Default file manager command',
     },
+    // 日志与存储：日志目录占用展示与清理（通用 Tab 底部）
+    storage: {
+      sectionTitle: 'Logs & Storage', // 分区小标题
+      logDir: 'Log directory', // 只读路径标签
+      logUsage: 'Log usage', // 占用大小标签
+      logFileCount: 'Log files', // 文件数标签
+      fileCountUnit: 'files', // 文件数单位后缀
+      refresh: 'Refresh', // 重新统计占用
+      clearLogs: 'Clear old logs', // 清理按钮
+      clearing: 'Clearing…', // 清理进行中按钮态
+      clearConfirmTitle: 'Clear old logs', // 二次确认标题
+      clearConfirmMessage:
+        "Deletes all log files before today, keeping only today's. This cannot be undone.", // 二次确认正文
+      clearSuccess: 'Cleared {count} log files, freed {size}', // 成功 toast
+      noOldLogs: 'No old logs to clear', // 无可删文件时提示
+      clearFailed: 'Failed to clear logs', // 失败 toast 前缀
+      loadStatsFailed: 'Failed to read log usage', // 统计失败 toast 前缀
+    },
     // 账号与安全 Tab：凭据状态与重新验证 / 删除凭据流程
     security: {
       description: 'Only credential existence is shown here; never the plaintext token.', // Tab 顶部安全声明

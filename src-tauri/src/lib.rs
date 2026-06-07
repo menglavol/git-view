@@ -65,10 +65,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     // 日志目录：macOS ~/Library/Application Support/gitview/logs
     //           Windows %LOCALAPPDATA%/gitview/logs
     //           Linux ~/.local/share/gitview/logs
-    let log_dir = dirs::data_local_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("gitview")
-        .join("logs");
+    let log_dir = crate::utils::path::log_dir();
 
     // 按天滚动的文件 appender
     let file_appender = rolling::daily(&log_dir, "gitview.log");
@@ -234,6 +231,8 @@ pub fn run() {
             commands::settings::update_settings,
             commands::settings::detect_git,
             commands::settings::set_git_path,
+            commands::settings::get_log_stats,
+            commands::settings::clear_old_logs,
             // US7 凭据级命令（账号与安全 / FR-055）
             commands::accounts::check_credential_exists,
             commands::accounts::save_credential,

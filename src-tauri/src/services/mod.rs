@@ -20,6 +20,7 @@ pub mod git_reader_service;
 pub mod gitee_service;
 pub mod github_service;
 pub mod gitlab_service;
+pub mod log_maintenance;
 pub mod log_service;
 pub mod provider;
 pub mod proxy;

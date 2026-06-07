@@ -107,6 +107,23 @@ export const zh = {
       terminal: '默认终端命令',
       fileManager: '默认文件管理器命令',
     },
+    // 日志与存储：日志目录占用展示与清理（通用 Tab 底部）
+    storage: {
+      sectionTitle: '日志与存储', // 分区小标题
+      logDir: '日志目录', // 只读路径标签
+      logUsage: '日志占用', // 占用大小标签
+      logFileCount: '日志文件数', // 文件数标签
+      fileCountUnit: '个文件', // 文件数单位后缀
+      refresh: '刷新', // 重新统计占用
+      clearLogs: '清理历史日志', // 清理按钮
+      clearing: '清理中…', // 清理进行中按钮态
+      clearConfirmTitle: '清理历史日志', // 二次确认标题
+      clearConfirmMessage: '将删除当天之前的所有日志文件，仅保留当天日志。此操作不可恢复。', // 二次确认正文
+      clearSuccess: '已清理 {count} 个日志文件，释放 {size}', // 成功 toast
+      noOldLogs: '没有可清理的历史日志', // 无可删文件时提示
+      clearFailed: '清理日志失败', // 失败 toast 前缀
+      loadStatsFailed: '读取日志占用失败', // 统计失败 toast 前缀
+    },
     // 账号与安全 Tab：凭据状态与重新验证 / 删除凭据流程
     security: {
       description: '此处仅显示凭据是否存在，绝不显示 Token 明文。', // Tab 顶部安全声明

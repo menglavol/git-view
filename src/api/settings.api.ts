@@ -5,7 +5,7 @@
 // =====================================================================
 
 import { invokeCmd } from './tauri';
-import type { GitDetectionResult, Settings } from '@/types/settings';
+import type { ClearLogsResult, GitDetectionResult, LogStats, Settings } from '@/types/settings';
 
 /**
  * 设置相关 API 集合。
@@ -31,5 +31,15 @@ export const settingsApi = {
   /** 校验用户指定的 git 路径并持久化（校验失败时抛错）。 */
   setGitPath(path: string): Promise<GitDetectionResult> {
     return invokeCmd<GitDetectionResult>('set_git_path', { path });
+  },
+
+  /** 读取日志目录占用统计（路径 + 大小 + 文件数）。 */
+  getLogStats(): Promise<LogStats> {
+    return invokeCmd<LogStats>('get_log_stats');
+  },
+
+  /** 清理历史日志（保留当天、删除更早的滚动文件），返回删除数与释放字节。 */
+  clearOldLogs(): Promise<ClearLogsResult> {
+    return invokeCmd<ClearLogsResult>('clear_old_logs');
   },
 };

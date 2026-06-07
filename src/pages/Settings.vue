@@ -98,6 +98,42 @@
           <el-form-item :label="t('settings.general.autoCheckStatus')">
             <el-switch v-model="form.general.autoCheckRepoStatus" />
           </el-form-item>
+
+          <!-- 日志与存储分区：展示日志目录占用并提供清理（与设置快照无关，独立 IPC） -->
+          <el-divider content-position="left">
+            {{ t('settings.storage.sectionTitle') }}
+          </el-divider>
+
+          <!-- 日志目录：只读绝对路径 + 刷新统计 -->
+          <el-form-item :label="t('settings.storage.logDir')">
+            <el-input :model-value="logStats?.dir ?? ''" readonly>
+              <template #append>
+                <el-button :loading="loadingStats" @click="loadLogStats">
+                  {{ t('settings.storage.refresh') }}
+                </el-button>
+              </template>
+            </el-input>
+          </el-form-item>
+
+          <!-- 日志占用：大小 + 文件数 + 清理按钮；无文件时禁用清理 -->
+          <el-form-item :label="t('settings.storage.logUsage')">
+            <span class="log-usage-text">
+              {{ logStats ? formatBytes(logStats.sizeBytes) : '—' }}
+            </span>
+            <span class="field-hint">
+              {{ logStats?.fileCount ?? 0 }} {{ t('settings.storage.fileCountUnit') }}
+            </span>
+            <el-button
+              type="warning"
+              plain
+              class="clear-logs-btn"
+              :loading="clearingLogs"
+              :disabled="!logStats || logStats.fileCount === 0"
+              @click="onClearLogs"
+            >
+              {{ clearingLogs ? t('settings.storage.clearing') : t('settings.storage.clearLogs') }}
+            </el-button>
+          </el-form-item>
         </el-form>
       </el-tab-pane>
 
@@ -363,13 +399,14 @@
  *   - credStatus：账号 → 凭据状态（checking/stored/missing），账号与安全 Tab 用。
  */
 import { onMounted, reactive, ref } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 
 import ConfirmDangerDialog from '@/components/common/ConfirmDangerDialog.vue';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import { accountApi } from '@/api/account.api';
+import { settingsApi } from '@/api/settings.api';
 import { useAccountStore } from '@/stores/account';
 import { useAppStore } from '@/stores/app';
 import { useSettingsStore } from '@/stores/settings';
@@ -377,6 +414,7 @@ import type { Account, GitPlatform } from '@/types/account';
 import type {
   GeneralSettings,
   GitDetectionResult,
+  LogStats,
   PullStrategy,
   PushStrategy,
   Settings,
@@ -424,6 +462,12 @@ interface SettingsForm {
 const activeTab = ref('general');
 // Git 检测结果回显（null 表示尚未检测）。
 const gitDetection = ref<GitDetectionResult | null>(null);
+// 日志目录占用统计（null 表示尚未加载）。
+const logStats = ref<LogStats | null>(null);
+// 日志占用统计加载中（刷新按钮 loading）。
+const loadingStats = ref(false);
+// 清理历史日志进行中（清理按钮 loading，防重复点击）。
+const clearingLogs = ref(false);
 // 账号凭据状态映射；账号与安全 Tab 首次激活时填充。
 const credStatus = reactive<Record<string, CredState>>({});
 // 账号与安全 Tab 是否已加载过（避免每次切 Tab 都重复请求）。
@@ -565,6 +609,82 @@ async function onDetectGit(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------
+// 日志与存储（通用 Tab 底部）
+// ---------------------------------------------------------------------
+
+/** 把字节数格式化为带单位的可读字符串（B/KB/MB/GB），保留一位小数。 */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`; // 不足 1KB 直接显示字节
+  const units = ['KB', 'MB', 'GB', 'TB']; // 逐级进位单位
+  let value = bytes / 1024; // 先进到 KB
+  let unitIndex = 0;
+  // 循环进位直到落在当前单位区间（<1024）或用尽单位
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+/** 读取日志目录占用统计；失败仅提示不阻断页面其余功能。 */
+async function loadLogStats(): Promise<void> {
+  loadingStats.value = true;
+  try {
+    logStats.value = await settingsApi.getLogStats();
+  } catch (e) {
+    ElMessage.error(
+      `${t('settings.storage.loadStatsFailed')}：${e instanceof Error ? e.message : String(e)}`,
+    );
+  } finally {
+    loadingStats.value = false;
+  }
+}
+
+/**
+ * 清理历史日志：二次确认后删除当天以前的滚动文件，保留当天。
+ *
+ * 删除是不可恢复操作，故先 ElMessageBox 确认；删完刷新占用统计，
+ * 并按实际删除数给出「已清理 N 个 / 无可清理」差异化反馈。
+ */
+async function onClearLogs(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      t('settings.storage.clearConfirmMessage'),
+      t('settings.storage.clearConfirmTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+      },
+    );
+  } catch {
+    return; // 用户取消确认，直接返回不清理
+  }
+  clearingLogs.value = true;
+  try {
+    const result = await settingsApi.clearOldLogs();
+    if (result.removed === 0) {
+      // 只剩当天日志、无更早文件可删
+      ElMessage.info(t('settings.storage.noOldLogs'));
+    } else {
+      ElMessage.success(
+        t('settings.storage.clearSuccess', {
+          count: result.removed,
+          size: formatBytes(result.freedBytes),
+        }),
+      );
+    }
+    await loadLogStats(); // 清理后刷新占用，反映最新大小
+  } catch (e) {
+    ElMessage.error(
+      `${t('settings.storage.clearFailed')}：${e instanceof Error ? e.message : String(e)}`,
+    );
+  } finally {
+    clearingLogs.value = false;
+  }
+}
+
+// ---------------------------------------------------------------------
 // 顶部保存 / 重置
 // ---------------------------------------------------------------------
 
@@ -689,6 +809,8 @@ onMounted(async () => {
     // 加载失败：保留首屏默认表单，给出提示，用户可切走再回重试
     ElMessage.error(`${t('settings.loadFailed')}：${e instanceof Error ? e.message : String(e)}`);
   }
+  // 日志占用与设置快照解耦，单独拉取；失败已在内部提示，不影响设置加载
+  await loadLogStats();
 });
 </script>
 
@@ -731,6 +853,16 @@ onMounted(async () => {
 }
 .narrow-select {
   width: 200px; /* 短选项（主题、语言）用窄下拉 */
+}
+
+/* 日志占用大小：主文字稍加粗，便于一眼读出占用 */
+.log-usage-text {
+  font-weight: 600; /* 加粗占用数值 */
+}
+
+/* 清理日志按钮：与左侧占用文字拉开间距 */
+.clear-logs-btn {
+  margin-left: 16px; /* 与占用/文件数文字留出间距 */
 }
 
 /* 账号与安全：安全声明文案用次色弱化 */

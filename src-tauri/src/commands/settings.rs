@@ -16,6 +16,7 @@ use tauri::State;
 use crate::errors::Result;
 use crate::models::settings::{GitDetectionResult, Settings};
 use crate::services::git_cli_service::{GitCliService, GitVersionInfo};
+use crate::services::log_maintenance::{self, ClearLogsResult, LogStats};
 use crate::services::settings_service;
 use crate::AppState;
 
@@ -82,4 +83,22 @@ fn detection_from_info(info: &GitVersionInfo, found: bool) -> GitDetectionResult
         user_name: info.user_name.clone(),
         user_email: info.user_email.clone(),
     }
+}
+
+/// 读取日志目录占用统计（路径 + 大小 + 文件数），供设置页展示。
+///
+/// 统计无失败路径（目录缺失视为空），故直接返回 `LogStats` 而非 `Result`。
+#[tauri::command]
+#[must_use]
+pub fn get_log_stats() -> LogStats {
+    log_maintenance::log_stats()
+}
+
+/// 清理历史日志（保留当天、删除更早的滚动文件），返回删除数与释放字节。
+///
+/// 单文件删除失败被静默跳过、整体不报错，故直接返回 `ClearLogsResult`。
+#[tauri::command]
+#[must_use]
+pub fn clear_old_logs() -> ClearLogsResult {
+    log_maintenance::clear_old_logs()
 }

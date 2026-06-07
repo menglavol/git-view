@@ -94,6 +94,32 @@ export interface Settings {
 }
 
 /**
+ * 日志目录占用统计（get_log_stats 返回，对应后端 LogStats）。
+ *
+ * 供设置页展示日志目录路径、占用大小与文件数，作为「清理历史日志」的决策依据。
+ */
+export interface LogStats {
+  /** 日志目录绝对路径 */
+  dir: string;
+  /** 目录内所有文件的总字节数 */
+  sizeBytes: number;
+  /** 日志文件个数 */
+  fileCount: number;
+}
+
+/**
+ * 清理历史日志的结果（clear_old_logs 返回，对应后端 ClearLogsResult）。
+ *
+ * 保留当天日志、删除更早的滚动文件后，回报删除数量与释放空间。
+ */
+export interface ClearLogsResult {
+  /** 删除的文件数 */
+  removed: number;
+  /** 释放的字节数 */
+  freedBytes: number;
+}
+
+/**
  * Git 环境检测结果（detect_git / set_git_path 返回）。
  *
  * 以 `found` 表达「是否检测到 git」：未装 git 是可处理的正常状态，
