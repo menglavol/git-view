@@ -59,6 +59,7 @@
         <GitFileChanges
           v-if="status"
           :changes="status.changes"
+          @view-diff="onViewDiff"
           @stage-file="onStageFile"
           @unstage-file="onUnstageFile"
           @stage-all="onStageAll"
@@ -137,6 +138,8 @@ const router = useRouter();
 
 /** 返回本地仓库列表页（固定跳转，不依赖浏览器历史）。 */
 function goBack(): void {
+  // 标记本次为「返回」，列表页据此恢复进入详情前的展开状态
+  localStore.markRestoreExpandOnReturn();
   void router.push({ name: 'local-repositories' });
 }
 const localStore = useLocalRepositoryStore();
@@ -222,11 +225,17 @@ async function reloadDiff(): Promise<void> {
 
 // ============ 文件操作 ============
 
-/** stage 单文件:成功后刷新 status 与当前 diff(stage 不改 diff 内容但暂存区会变化) */
+/** 单击文件行:在右侧查看其 diff（切到 Diff tab），不改变暂存状态。 */
+async function onViewDiff(path: string): Promise<void> {
+  selectedFile.value = path;
+  middleTab.value = 'diff';
+  await reloadDiff();
+}
+
+/** stage 单文件:成功后刷新 status 与当前 diff（不改 selectedFile，避免正在看的 diff 被切走） */
 async function onStageFile(path: string): Promise<void> {
   try {
     await gitApi.stageFile(repoId.value, path);
-    selectedFile.value = path;
     await Promise.all([loadAll(), reloadDiff()]);
   } catch (e) {
     ElMessage.error(`暂存失败:${formatError(e)}`);
@@ -237,7 +246,6 @@ async function onStageFile(path: string): Promise<void> {
 async function onUnstageFile(path: string): Promise<void> {
   try {
     await gitApi.unstageFile(repoId.value, path);
-    selectedFile.value = path;
     await Promise.all([loadAll(), reloadDiff()]);
   } catch (e) {
     ElMessage.error(`取消暂存失败:${formatError(e)}`);

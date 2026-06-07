@@ -51,7 +51,7 @@
           v-for="file in staged"
           :key="`s-${file.path}`"
           class="file-row"
-          @click="emit('unstage-file', file.path)"
+          @click="emit('view-diff', file.path)"
         >
           <!-- 状态字母:右侧颜色随 status 类型变化 -->
           <span class="status-letter" :class="statusClass(file.status)">{{
@@ -59,7 +59,7 @@
           }}</span>
           <!-- 文件路径:可截断,完整路径用 title 工具提示 -->
           <span class="file-path" :title="file.path">{{ file.path }}</span>
-          <!-- 行内操作按钮区,阻止冒泡避免触发整行 click -->
+          <!-- 行内操作按钮区,阻止冒泡避免触发整行 click(看 diff) -->
           <span class="file-actions" @click.stop>
             <el-button text size="small" @click="emit('unstage-file', file.path)"
               >取消暂存</el-button
@@ -78,7 +78,7 @@
           v-for="file in unstaged"
           :key="`u-${file.path}`"
           class="file-row"
-          @click="emit('stage-file', file.path)"
+          @click="emit('view-diff', file.path)"
         >
           <span class="status-letter" :class="statusClass(file.status)">{{
             statusLetter(file.status)
@@ -125,6 +125,8 @@ const props = defineProps<{ changes: FileChange[] }>();
 
 /** 事件契约:四种文件级动作 + 两种批量动作 + 一个 discard 二次确认结果。 */
 const emit = defineEmits<{
+  /** 整行单击：在右侧查看该文件的 diff（不改变暂存状态） */
+  'view-diff': [path: string];
   'stage-file': [path: string];
   'unstage-file': [path: string];
   'stage-all': [];

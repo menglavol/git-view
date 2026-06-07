@@ -32,6 +32,7 @@
     @select="onSelect"
     @select-all="onSelectAll"
     @selection-change="onSelectionChange"
+    @expand-change="onExpandChange"
   >
     <!-- 选择框列：用于父页面批量操作；勾选目录/含子仓库的节点会级联其子树 -->
     <ElTableColumn type="selection" width="44" />
@@ -127,7 +128,7 @@
 // 选择级联数据流：勾选目录（或含子仓库的仓库节点）→ onSelect 级联子树 →
 // selection-change 汇总 → 过滤出仓库后 emit；目录节点永不进入对外 selection。
 // =====================================================================
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import type { TableInstance } from 'element-plus';
 
 import type { LocalRepository, RepositoryStatus } from '@/types/repository';
@@ -142,6 +143,8 @@ const props = defineProps<{
   loading?: boolean;
   /** 空态文案：列表为空时显示的提示文字 */
   emptyText?: string;
+  /** 受控展开的目录 id 列表（用于「从详情返回」时恢复展开状态） */
+  expandedKeys?: string[];
 }>();
 
 // 事件签名：父组件通过这些事件接管所有副作用（参数始终是真实 LocalRepository）
@@ -160,6 +163,8 @@ const emit = defineEmits<{
   (e: 'open-terminal', repo: LocalRepository): void;
   /** 从列表移除：父页面须做二次确认 */
   (e: 'remove', repo: LocalRepository): void;
+  /** 展开的目录 id 变化：父页面同步到 store，以便返回时恢复 */
+  (e: 'update:expandedKeys', keys: string[]): void;
 }>();
 
 // el-table 实例引用：用于树形选择的程序化级联（toggleRowSelection）
@@ -173,6 +178,43 @@ const treeData = computed(() => buildRepoForest(props.items));
 function childrenOf(node: RepoTreeNode): RepoTreeNode[] {
   return node.type === 'dir' ? node.children : (node.children ?? []);
 }
+
+/** 在树里按 id 查找节点（恢复展开时用于定位行对象）。 */
+function findNodeById(nodes: RepoTreeNode[], id: string): RepoTreeNode | null {
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    const found = findNodeById(childrenOf(n), id);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** 用户展开/折叠目录时，把最新展开的目录 id 同步给父页面（写入 store）。 */
+function onExpandChange(row: RepoTreeNode, expanded: boolean): void {
+  if (row.type !== 'dir') return;
+  const cur = props.expandedKeys ?? [];
+  // 用 Set 去重，避免恢复时 toggle 再次触发导致重复 key
+  const next = expanded ? [...new Set([...cur, row.id])] : cur.filter((k) => k !== row.id);
+  emit('update:expandedKeys', next);
+}
+
+/** 数据就绪后，把 store 记录的展开 keys 恢复到表格（仅「返回」场景非空）。 */
+async function restoreExpanded(): Promise<void> {
+  const keys = props.expandedKeys ?? [];
+  if (keys.length === 0) return;
+  // 等 el-table 渲染出新一批行后再逐个展开（toggleRowExpansion 只设状态，渲染时层层展开）
+  await nextTick();
+  for (const key of keys) {
+    const node = findNodeById(treeData.value, key);
+    if (node) tableRef.value?.toggleRowExpansion(node, true);
+  }
+}
+
+// items 变化（如 fetchAll 完成）会重建树，重建后重新套用展开状态
+watch(
+  () => props.items,
+  () => void restoreExpanded(),
+);
 
 /** 递归收集某节点子树下的所有节点（子目录、子仓库），用于勾选级联。 */
 function collectDescendants(node: RepoTreeNode): RepoTreeNode[] {

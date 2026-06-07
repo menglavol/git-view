@@ -32,6 +32,25 @@ export const useLocalRepositoryStore = defineStore('localRepository', () => {
   const error = ref<string | null>(null);
   /** 最近一次批量 Fetch 的结果摘要，前端可在工具栏下显示成功/失败计数 */
   const lastFetchSummary = ref<BatchFetchSummary | null>(null);
+  /** 本地仓库树已展开的目录 id（跨「进入详情 → 返回」保留） */
+  const expandedKeys = ref<string[]>([]);
+  /** 仅当从详情页「返回」时为 true，列表挂载时据此恢复展开 */
+  const restoreExpandOnReturn = ref(false);
+
+  /** 列表组件同步当前展开的目录 id 集合。 */
+  function setExpandedKeys(keys: string[]): void {
+    expandedKeys.value = keys;
+  }
+  /** 详情页「返回」前调用，标记下次进入列表需恢复展开。 */
+  function markRestoreExpandOnReturn(): void {
+    restoreExpandOnReturn.value = true;
+  }
+  /** 读取并重置「返回」标志：true 表示本次是返回、应恢复展开。 */
+  function consumeRestoreExpand(): boolean {
+    const v = restoreExpandOnReturn.value;
+    restoreExpandOnReturn.value = false;
+    return v;
+  }
 
   /** 拉取全部本地仓库，覆盖 repositories（页面 onMounted 与多数 action 完成后调用）。 */
   async function fetchAll(): Promise<void> {
@@ -142,6 +161,10 @@ export const useLocalRepositoryStore = defineStore('localRepository', () => {
     fetching,
     error,
     lastFetchSummary,
+    expandedKeys,
+    setExpandedKeys,
+    markRestoreExpandOnReturn,
+    consumeRestoreExpand,
     fetchAll,
     addByPath,
     scanRoot,

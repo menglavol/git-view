@@ -45,8 +45,10 @@
     <LocalRepoTable
       :items="store.repositories"
       :loading="store.scanning || store.refreshing"
+      :expanded-keys="store.expandedKeys"
       empty-text="尚未添加任何本地仓库，请点击「添加仓库」或「扫描父目录」"
       @update:selection="selection = $event"
+      @update:expanded-keys="store.setExpandedKeys"
       @open-detail="onOpenDetail"
       @refresh="onRefreshOne"
       @fetch="onFetchOne"
@@ -111,6 +113,10 @@ const selection = ref<LocalRepository[]>([]); // 初始为空数组
 
 // 挂载时拉一次列表；失败 toast 提示但不阻塞页面
 onMounted(() => {
+  // 仅「从详情返回」时保留展开；其它入口（左侧菜单等）清空 = 默认折叠
+  if (!store.consumeRestoreExpand()) {
+    store.setExpandedKeys([]);
+  }
   // void 显式忽略 Promise，避免 ESLint no-floating-promises 警告
   void store.fetchAll().catch((e) => {
     ElMessage.error(`加载本地仓库失败：${e instanceof Error ? e.message : String(e)}`);
