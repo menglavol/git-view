@@ -477,13 +477,18 @@ pub fn retry_clone_task<R: tauri::Runtime>(
     Ok(())
 }
 
-pub fn clear_finished_clone_tasks(pool: &DbPool) -> Result<usize> {
-    pool.with_conn(|conn| {
+/// 按状态清理克隆任务（前端三个「清空」按钮分别传 completed / failed / cancelled）。
+pub fn clear_clone_tasks_by_status(pool: &DbPool, status: &str) -> Result<usize> {
+    // 仅允许清理终态，避免误删进行中 / 排队任务
+    if !matches!(status, "completed" | "failed" | "cancelled") {
+        return Err(GitViewError::Internal(format!("不支持清理状态：{status}")));
+    }
+    let status = status.to_string();
+    pool.with_conn(move |conn| {
         let n = conn
             .execute(
-                "DELETE FROM clone_tasks
-                 WHERE status IN ('completed', 'cancelled', 'failed')",
-                [],
+                "DELETE FROM clone_tasks WHERE status = ?1",
+                rusqlite::params![status],
             )
             .map_err(GitViewError::from)?;
         Ok(n)

@@ -198,7 +198,7 @@ pub fn run() {
             commands::clone_tasks::list_clone_tasks,
             commands::clone_tasks::cancel_clone_task,
             commands::clone_tasks::retry_clone_task,
-            commands::clone_tasks::clear_finished_clone_tasks,
+            commands::clone_tasks::clear_clone_tasks_by_status,
             // US4 本地仓库
             commands::local_repositories::add_local_repository,
             commands::local_repositories::scan_local_repositories,

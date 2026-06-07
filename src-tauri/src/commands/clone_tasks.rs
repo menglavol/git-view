@@ -66,7 +66,8 @@ pub fn retry_clone_task(
     )
 }
 
+/// 按状态清理克隆任务（completed / failed / cancelled 之一）。
 #[tauri::command]
-pub fn clear_finished_clone_tasks(state: State<'_, AppState>) -> Result<usize> {
-    clone_task_service::clear_finished_clone_tasks(&state.db)
+pub fn clear_clone_tasks_by_status(state: State<'_, AppState>, status: String) -> Result<usize> {
+    clone_task_service::clear_clone_tasks_by_status(&state.db, &status)
 }

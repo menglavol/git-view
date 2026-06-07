@@ -47,8 +47,8 @@ export const cloneTaskApi = {
   retry(taskId: string, autoAddToLocal: boolean): Promise<void> {
     return invokeCmd<void>('retry_clone_task', { taskId, autoAddToLocal });
   },
-  clearFinished(): Promise<number> {
-    return invokeCmd<number>('clear_finished_clone_tasks');
+  clearByStatus(status: CloneTaskStatus): Promise<number> {
+    return invokeCmd<number>('clear_clone_tasks_by_status', { status });
   },
 
   onProgress(handler: (p: CloneProgressPayload) => void) {

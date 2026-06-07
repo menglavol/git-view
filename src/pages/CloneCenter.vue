@@ -3,7 +3,13 @@
     <div class="page-header">
       <h2 class="page-title">Clone 中心</h2>
       <div class="header-actions">
-        <ElButton @click="onClearFinished">清空已完成</ElButton>
+        <ElButton :disabled="counts.completed === 0" @click="onClear('completed')">
+          清空已完成
+        </ElButton>
+        <ElButton :disabled="counts.failed === 0" @click="onClear('failed')">清空已失败</ElButton>
+        <ElButton :disabled="counts.cancelled === 0" @click="onClear('cancelled')">
+          清空已取消
+        </ElButton>
         <ElButton @click="onRefresh">刷新</ElButton>
       </div>
     </div>
@@ -99,7 +105,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { useCloneTaskStore } from '@/stores/cloneTask';
 import type { CloneTask, CloneTaskStatus } from '@/types/cloneTask';
@@ -132,10 +138,32 @@ async function onRefresh(): Promise<void> {
   });
 }
 
-async function onClearFinished(): Promise<void> {
+// 三种可清理的终态文案，用于按钮 / 确认框 / 成功提示
+const CLEARABLE_TEXT: Record<'completed' | 'failed' | 'cancelled', string> = {
+  completed: '已完成',
+  failed: '已失败',
+  cancelled: '已取消',
+};
+
+async function onClear(status: 'completed' | 'failed' | 'cancelled'): Promise<void> {
+  const n = counts.value[status];
+  const text = CLEARABLE_TEXT[status];
+  // 按钮在该状态计数为 0 时已 disable，这里兜底
+  if (n === 0) return;
   try {
-    const n = await store.clearFinished();
-    ElMessage.success(`已清理 ${n} 条记录`);
+    // 删除类操作二次确认（宪法 Principle III）；强调只删任务记录、不动磁盘文件
+    await ElMessageBox.confirm(
+      `确认清空全部「${text}」的任务记录吗？共 ${n} 条。\n\n注：仅删除任务记录，不影响已克隆到磁盘的文件。`,
+      `清空${text}任务`,
+      { confirmButtonText: '确认清空', cancelButtonText: '取消', type: 'warning' },
+    );
+  } catch {
+    // 用户取消：ElMessageBox reject，静默返回
+    return;
+  }
+  try {
+    const cleared = await store.clearByStatus(status);
+    ElMessage.success(`已清理 ${cleared} 条${text}任务`);
   } catch (e) {
     ElMessage.error(`清理失败：${e instanceof Error ? e.message : String(e)}`);
   }

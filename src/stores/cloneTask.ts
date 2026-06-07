@@ -14,7 +14,7 @@ import {
   type CloneStatusPayload,
   type CreateCloneTasksPayload,
 } from '@/api/cloneTask.api';
-import type { CloneTask } from '@/types/cloneTask';
+import type { CloneTask, CloneTaskStatus } from '@/types/cloneTask';
 
 export const useCloneTaskStore = defineStore('cloneTask', () => {
   const tasks = ref<CloneTask[]>([]);
@@ -69,11 +69,10 @@ export const useCloneTaskStore = defineStore('cloneTask', () => {
     }
   }
 
-  async function clearFinished(): Promise<number> {
-    const n = await cloneTaskApi.clearFinished();
-    tasks.value = tasks.value.filter(
-      (t) => !['completed', 'failed', 'cancelled'].includes(t.status),
-    );
+  async function clearByStatus(status: CloneTaskStatus): Promise<number> {
+    const n = await cloneTaskApi.clearByStatus(status);
+    // 原地移除该状态的任务，避免再拉全量
+    tasks.value = tasks.value.filter((t) => t.status !== status);
     return n;
   }
 
@@ -116,7 +115,7 @@ export const useCloneTaskStore = defineStore('cloneTask', () => {
     createAndStart,
     cancel,
     retry,
-    clearFinished,
+    clearByStatus,
     startListening,
     stopListening,
   };
