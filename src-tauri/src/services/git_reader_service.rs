@@ -15,8 +15,12 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 
 use crate::errors::{GitViewError, Result};
-use crate::models::git::{Branch, CommitInfo, FileChange, FileStatus, GitStatus};
+use crate::models::git::{
+    Branch, CommitDetail, CommitFile, CommitFileStatus, CommitInfo, CommitStats, FileChange,
+    FileStatus, GitStatus,
+};
 use crate::models::repository::RepositoryStatus;
+use crate::services::provider::truncate_file_diff;
 use crate::utils::process::run_command;
 
 // =====================================================================
@@ -215,6 +219,200 @@ pub async fn diff(repo_path: &Path, file: Option<&str>, cached: bool) -> Result<
     };
 
     Ok(DiffResult { text, truncated })
+}
+
+// =====================================================================
+// 单提交详情（git show）
+// =====================================================================
+
+/// 获取单个提交的详情：元信息 + 改动文件 + 每文件 diff。
+///
+/// 两次 `git show`：`-s` 取格式化元信息（含完整正文 %B）；`--patch` 取整体
+/// diff，再按 `diff --git` 边界切块为各文件，并从块内 +/- 行统计增删数。
+pub async fn commit_detail(repo_path: &Path, sha: &str) -> Result<CommitDetail> {
+    // 1) 元信息：字段用 \x1f 分隔，%B（完整正文，可能含换行）置于末尾
+    let meta_out = run_command(
+        "git",
+        &[
+            "show",
+            "-s",
+            "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%P%x1f%B",
+            sha,
+        ],
+        &[],
+        Some(repo_path),
+    )
+    .await?;
+    if !meta_out.status.success() {
+        let stderr = String::from_utf8_lossy(&meta_out.stderr);
+        return Err(GitViewError::GitCommand(format!("git show 失败：{stderr}")));
+    }
+    let meta_raw = String::from_utf8_lossy(&meta_out.stdout);
+    // splitn(10)：前 9 个字段无换行，第 10 段为可能含换行的完整正文
+    let fields: Vec<&str> = meta_raw.splitn(10, '\x1f').collect();
+    if fields.len() < 10 {
+        return Err(GitViewError::GitCommand("解析提交元信息失败".to_string()));
+    }
+    let authored_at = DateTime::parse_from_rfc3339(fields[4])
+        .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc));
+    let committed_at = DateTime::parse_from_rfc3339(fields[7])
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc));
+    let parent_shas: Vec<String> = if fields[8].trim().is_empty() {
+        Vec::new()
+    } else {
+        fields[8].split(' ').map(String::from).collect()
+    };
+
+    // 2) 整体 diff，按文件切块
+    let patch_out = run_command(
+        "git",
+        &["show", "--format=", "--patch", sha],
+        &[],
+        Some(repo_path),
+    )
+    .await?;
+    if !patch_out.status.success() {
+        let stderr = String::from_utf8_lossy(&patch_out.stderr);
+        return Err(GitViewError::GitCommand(format!(
+            "git show diff 失败：{stderr}"
+        )));
+    }
+    let patch_raw = String::from_utf8_lossy(&patch_out.stdout);
+    let files = parse_commit_files(&patch_raw);
+
+    // 汇总增删行（各文件之和）
+    let (additions, deletions) = files.iter().fold((0u32, 0u32), |(a, d), f| {
+        (a + f.additions.unwrap_or(0), d + f.deletions.unwrap_or(0))
+    });
+
+    Ok(CommitDetail {
+        sha: fields[0].to_string(),
+        short_sha: fields[1].to_string(),
+        message: fields[9].trim_end().to_string(),
+        author_name: fields[2].to_string(),
+        author_email: fields[3].to_string(),
+        authored_at,
+        committer_name: opt_string(fields[5]),
+        committer_email: opt_string(fields[6]),
+        committed_at,
+        parent_shas,
+        html_url: None,
+        stats: Some(CommitStats {
+            additions,
+            deletions,
+            total: additions + deletions,
+        }),
+        files,
+    })
+}
+
+/// 空串转 None：用于可空元信息字段（提交者姓名 / 邮箱）。
+fn opt_string(s: &str) -> Option<String> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+/// 把 `git show --patch` 的整体 diff 按 `diff --git` 边界切块为各文件。
+fn parse_commit_files(patch: &str) -> Vec<CommitFile> {
+    let mut files = Vec::new();
+    let mut current: Option<FileAccum> = None;
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            // 遇到新文件块，先收尾上一个
+            if let Some(acc) = current.take() {
+                files.push(acc.into_file());
+            }
+            current = Some(FileAccum::new(line));
+        } else if let Some(acc) = current.as_mut() {
+            acc.feed(line);
+        }
+    }
+    if let Some(acc) = current.take() {
+        files.push(acc.into_file());
+    }
+    files
+}
+
+/// 单文件 diff 块的累积器：边读边解析状态 / 路径 / 增删行。
+struct FileAccum {
+    lines: Vec<String>,
+    status: CommitFileStatus,
+    old_path: Option<String>,
+    new_path: Option<String>,
+    additions: u32,
+    deletions: u32,
+}
+
+impl FileAccum {
+    /// 从 `diff --git a/X b/Y` 行初始化（路径含空格的罕见情况按 V1 简化处理）。
+    fn new(header_line: &str) -> Self {
+        let (old, new) = parse_diff_git_paths(header_line);
+        Self {
+            lines: vec![header_line.to_string()],
+            status: CommitFileStatus::Modified,
+            old_path: old,
+            new_path: new,
+            additions: 0,
+            deletions: 0,
+        }
+    }
+
+    /// 累积块内一行，并按块头标志推断状态、按 +/- 前缀统计增删。
+    fn feed(&mut self, line: &str) {
+        self.lines.push(line.to_string());
+        if line.starts_with("new file mode") {
+            self.status = CommitFileStatus::Added;
+        } else if line.starts_with("deleted file mode") {
+            self.status = CommitFileStatus::Deleted;
+        } else if let Some(p) = line.strip_prefix("rename from ") {
+            self.status = CommitFileStatus::Renamed;
+            self.old_path = Some(p.to_string());
+        } else if let Some(p) = line.strip_prefix("rename to ") {
+            self.status = CommitFileStatus::Renamed;
+            self.new_path = Some(p.to_string());
+        } else if line.starts_with("+++") || line.starts_with("---") {
+            // diff 文件头（+++/---），不计入增删
+        } else if line.starts_with('+') {
+            self.additions += 1;
+        } else if line.starts_with('-') {
+            self.deletions += 1;
+        }
+    }
+
+    /// 收尾为 `CommitFile`（diff 文本按上限截断）。
+    fn into_file(self) -> CommitFile {
+        let (diff, truncated) = truncate_file_diff(&self.lines.join("\n"));
+        // 仅重命名保留旧路径
+        let old_path = if self.status == CommitFileStatus::Renamed {
+            self.old_path
+        } else {
+            None
+        };
+        CommitFile {
+            path: self.new_path.unwrap_or_default(),
+            old_path,
+            status: self.status,
+            additions: Some(self.additions),
+            deletions: Some(self.deletions),
+            diff: Some(diff),
+            truncated,
+        }
+    }
+}
+
+/// 从 `diff --git a/<old> b/<new>` 行解析旧 / 新路径。
+fn parse_diff_git_paths(line: &str) -> (Option<String>, Option<String>) {
+    let rest = line.strip_prefix("diff --git ").unwrap_or("");
+    // 以 " b/" 分隔 a 段与 b 段（路径含空格的极端情况按 V1 简化忽略）
+    rest.find(" b/").map_or((None, None), |idx| {
+        let old = rest[..idx].strip_prefix("a/").map(String::from);
+        let new = Some(rest[idx + 3..].to_string());
+        (old, new)
+    })
 }
 
 // =====================================================================

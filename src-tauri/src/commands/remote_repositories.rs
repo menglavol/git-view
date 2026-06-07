@@ -5,8 +5,10 @@
 use tauri::State;
 
 use crate::errors::Result;
+use crate::models::git::CommitDetail;
 use crate::models::repository::RemoteRepository;
 use crate::services::account_service;
+use crate::services::provider::CommitPage;
 use crate::services::repository_service::{self, RemoteRepoFilter};
 use crate::AppState;
 
@@ -77,4 +79,34 @@ pub fn toggle_favorite_remote_repository(
     repo_id: String,
 ) -> Result<bool> {
     repository_service::toggle_favorite(&state.db, &repo_id)
+}
+
+/// 拉取远程仓库的提交历史（分页）。
+///
+/// 同步取出仓库与 provider（不跨 await 持有 DB 锁），再异步调平台 commits API。
+/// page 从 1 起、默认每页 30 条，与三平台 API 的分页约定对齐。
+#[tauri::command]
+pub async fn list_remote_commits(
+    state: State<'_, AppState>,
+    repo_id: String,
+    page: Option<u32>,
+    per_page: Option<u32>,
+) -> Result<CommitPage> {
+    let repo = repository_service::get_remote_repository(&state.db, &repo_id)?;
+    let provider = account_service::provider_for_account(&state.db, &repo.account_id)?;
+    provider
+        .list_commits(&repo, None, page.unwrap_or(1), per_page.unwrap_or(30))
+        .await
+}
+
+/// 获取远程仓库单个提交的详情（元信息 + 改动文件 + 每文件 diff）。
+#[tauri::command]
+pub async fn get_remote_commit_detail(
+    state: State<'_, AppState>,
+    repo_id: String,
+    sha: String,
+) -> Result<CommitDetail> {
+    let repo = repository_service::get_remote_repository(&state.db, &repo_id)?;
+    let provider = account_service::provider_for_account(&state.db, &repo.account_id)?;
+    provider.get_commit_detail(&repo, &sha).await
 }

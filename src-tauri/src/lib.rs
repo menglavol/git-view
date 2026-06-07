@@ -189,6 +189,8 @@ pub fn run() {
             commands::remote_repositories::refresh_remote_repositories,
             commands::remote_repositories::get_remote_repository_detail,
             commands::remote_repositories::toggle_favorite_remote_repository,
+            commands::remote_repositories::list_remote_commits,
+            commands::remote_repositories::get_remote_commit_detail,
             // US3 Clone 任务
             commands::clone_tasks::create_clone_tasks,
             commands::clone_tasks::start_clone_tasks,
@@ -222,6 +224,7 @@ pub fn run() {
             commands::git::git_checkout_branch,
             commands::git::git_create_branch,
             commands::git::git_discard_changes,
+            commands::git::git_commit_detail,
             // US6 操作日志
             commands::logs::list_operation_logs,
             commands::logs::get_operation_log_detail,

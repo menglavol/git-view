@@ -759,6 +759,19 @@ fn provider_proxy(
     }
 }
 
+/// 按账号 id 构造对应平台的 Provider（读账号 + keyring token + `build_provider`）。
+///
+/// 供远程提交历史等需要直接调 provider 的 command 复用，确保认证 / 代理 / 自建
+/// 实例配置与仓库同步流程完全一致。
+pub fn provider_for_account(
+    pool: &DbPool,
+    account_id: &str,
+) -> Result<Box<dyn GitHostingProvider>> {
+    let account = load_account_by_id(pool, account_id)?;
+    let token = credential_service::load_token(account_id)?;
+    build_provider(pool, &account, &token)
+}
+
 /// 根据账号信息构造对应平台的 Provider 实例。
 ///
 /// 代理:读全局网络设置并与账号级代理（仅自建 GitLab 有）合并后传给 provider,

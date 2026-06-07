@@ -14,9 +14,11 @@
 //!   - 错误消息通过 `crate::utils::redact::redact_token` 脱敏后再向上传递
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::errors::Result;
+use crate::errors::{GitViewError, Result};
+use crate::models::git::{CommitDetail, CommitSummary};
 use crate::models::repository::RemoteRepository;
 
 /// 平台用户档案（连接测试与账号同步用）。
@@ -41,6 +43,16 @@ pub struct UserProfile {
 pub struct RepositoryPage {
     /// 当前页仓库列表
     pub items: Vec<RemoteRepository>,
+    /// 是否还有下一页（用于前端"加载更多"判断）
+    pub has_next: bool,
+}
+
+/// 提交分页结果（list_commits 使用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitPage {
+    /// 当前页提交列表
+    pub items: Vec<CommitSummary>,
     /// 是否还有下一页（用于前端"加载更多"判断）
     pub has_next: bool,
 }
@@ -78,4 +90,51 @@ pub trait GitHostingProvider: Send + Sync {
             has_next: false,
         })
     }
+
+    /// 拉取指定远程仓库的提交历史（分页）。
+    ///
+    /// `branch` 缺省时由实现回退到仓库默认分支。默认实现表示该平台尚未支持。
+    async fn list_commits(
+        &self,
+        _repo: &RemoteRepository,
+        _branch: Option<&str>,
+        _page: u32,
+        _per_page: u32,
+    ) -> Result<CommitPage> {
+        Err(GitViewError::Internal("该平台暂不支持提交历史".to_string()))
+    }
+
+    /// 获取单个提交的详情（元信息 + 改动文件 + 每文件 diff）。
+    ///
+    /// 默认实现表示该平台尚未支持。
+    async fn get_commit_detail(
+        &self,
+        _repo: &RemoteRepository,
+        _sha: &str,
+    ) -> Result<CommitDetail> {
+        Err(GitViewError::Internal("该平台暂不支持提交详情".to_string()))
+    }
+}
+
+/// 单文件 diff 最大保留字符数，超出则截断（防止巨型提交撑爆 IPC / 前端渲染）。
+pub const MAX_COMMIT_FILE_DIFF_CHARS: usize = 100_000;
+
+/// 按字符数截断单文件 diff；返回 `(截断后文本, 是否发生截断)`。
+#[must_use]
+pub fn truncate_file_diff(diff: &str) -> (String, bool) {
+    if diff.chars().count() > MAX_COMMIT_FILE_DIFF_CHARS {
+        // 按字符（非字节）截断，避免切到多字节 UTF-8 中间导致 panic
+        let truncated: String = diff.chars().take(MAX_COMMIT_FILE_DIFF_CHARS).collect();
+        (truncated, true)
+    } else {
+        (diff.to_string(), false)
+    }
+}
+
+/// 解析 ISO 8601 时间为 `DateTime<Utc>`；解析失败返回 `None`。
+#[must_use]
+pub fn parse_iso_datetime(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
 }

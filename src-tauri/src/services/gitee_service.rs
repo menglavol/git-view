@@ -19,8 +19,12 @@ use uuid::Uuid;
 
 use crate::errors::{GitViewError, Result};
 use crate::models::account::GitPlatform;
+use crate::models::git::{CommitDetail, CommitFile, CommitFileStatus, CommitStats, CommitSummary};
 use crate::models::repository::{RemoteRepository, Visibility};
-use crate::services::provider::{GitHostingProvider, RepositoryPage, UserProfile};
+use crate::services::provider::{
+    parse_iso_datetime, truncate_file_diff, CommitPage, GitHostingProvider, RepositoryPage,
+    UserProfile,
+};
 use crate::utils::redact::redact_token;
 
 /// Gitee API 默认基址。
@@ -119,6 +123,68 @@ struct GiteeRepoResp {
 #[derive(Debug, Deserialize)]
 struct GiteeOwner {
     login: String,
+}
+
+/// Gitee 提交列表项字段子集（API 形态对齐 GitHub）。
+#[derive(Debug, Deserialize)]
+struct GiteeCommitListResp {
+    sha: String,
+    commit: GiteeCommitMeta,
+    html_url: Option<String>,
+}
+
+/// Gitee 提交详情字段子集（含 stats 与 files）。
+#[derive(Debug, Deserialize)]
+struct GiteeCommitDetailResp {
+    sha: String,
+    commit: GiteeCommitMeta,
+    html_url: Option<String>,
+    #[serde(default)]
+    parents: Vec<GiteeParent>,
+    stats: Option<GiteeStats>,
+    files: Option<Vec<GiteeFile>>,
+}
+
+/// 提交的 git 元信息（作者 / 提交者 / message）。
+#[derive(Debug, Deserialize)]
+struct GiteeCommitMeta {
+    message: String,
+    author: Option<GiteeGitActor>,
+    committer: Option<GiteeGitActor>,
+}
+
+/// git 操作者（作者或提交者）的姓名 / 邮箱 / 时间。
+#[derive(Debug, Deserialize)]
+struct GiteeGitActor {
+    name: Option<String>,
+    email: Option<String>,
+    date: Option<String>,
+}
+
+/// 父提交引用。
+#[derive(Debug, Deserialize)]
+struct GiteeParent {
+    sha: String,
+}
+
+/// 提交增删行汇总。
+#[derive(Debug, Deserialize)]
+struct GiteeStats {
+    additions: u32,
+    deletions: u32,
+    total: u32,
+}
+
+/// 单文件变更字段子集（patch 即 unified diff）。
+#[derive(Debug, Deserialize)]
+struct GiteeFile {
+    filename: String,
+    status: String,
+    additions: Option<u32>,
+    deletions: Option<u32>,
+    patch: Option<String>,
+    #[serde(default)]
+    previous_filename: Option<String>,
 }
 
 #[async_trait]
@@ -249,6 +315,191 @@ impl GitHostingProvider for GiteeProvider {
             .collect();
 
         Ok(RepositoryPage { items, has_next })
+    }
+
+    async fn list_commits(
+        &self,
+        repo: &RemoteRepository,
+        branch: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> Result<CommitPage> {
+        // branch 缺省回退仓库默认分支
+        let sha = branch.unwrap_or(&repo.default_branch);
+        let base = format!(
+            "{}/repos/{}/{}/commits?sha={}&per_page={}&page={}",
+            self.api_base_url.trim_end_matches('/'),
+            repo.owner,
+            repo.name,
+            sha,
+            per_page,
+            page,
+        );
+
+        let req = match self.auth_mode {
+            GiteeAuthMode::Header => self
+                .client
+                .get(&base)
+                .header("Authorization", format!("token {}", self.token)),
+            GiteeAuthMode::Query => self
+                .client
+                .get(&base)
+                .query(&[("access_token", &self.token)]),
+        };
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| map_request_error("Gitee", &e))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(map_status_error("Gitee", status.as_u16()));
+        }
+
+        let list: Vec<GiteeCommitListResp> = resp.json().await.map_err(|e| {
+            GitViewError::Network(format!(
+                "解析 Gitee 提交列表失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        // Gitee 无 Link 头：满页即认为还有下一页
+        let has_next = list.len() == per_page as usize;
+        let items = list
+            .into_iter()
+            .map(|c| {
+                let authored_at = c
+                    .commit
+                    .author
+                    .as_ref()
+                    .and_then(|a| a.date.as_deref())
+                    .and_then(parse_iso_datetime)
+                    .unwrap_or_else(Utc::now);
+                CommitSummary {
+                    short_sha: c.sha.chars().take(7).collect(),
+                    summary: c.commit.message.lines().next().unwrap_or("").to_string(),
+                    author_name: c
+                        .commit
+                        .author
+                        .as_ref()
+                        .and_then(|a| a.name.clone())
+                        .unwrap_or_default(),
+                    authored_at,
+                    html_url: c.html_url,
+                    sha: c.sha,
+                }
+            })
+            .collect();
+
+        Ok(CommitPage { items, has_next })
+    }
+
+    async fn get_commit_detail(&self, repo: &RemoteRepository, sha: &str) -> Result<CommitDetail> {
+        let base = format!(
+            "{}/repos/{}/{}/commits/{}",
+            self.api_base_url.trim_end_matches('/'),
+            repo.owner,
+            repo.name,
+            sha,
+        );
+
+        let req = match self.auth_mode {
+            GiteeAuthMode::Header => self
+                .client
+                .get(&base)
+                .header("Authorization", format!("token {}", self.token)),
+            GiteeAuthMode::Query => self
+                .client
+                .get(&base)
+                .query(&[("access_token", &self.token)]),
+        };
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| map_request_error("Gitee", &e))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(map_status_error("Gitee", status.as_u16()));
+        }
+
+        let detail: GiteeCommitDetailResp = resp.json().await.map_err(|e| {
+            GitViewError::Network(format!(
+                "解析 Gitee 提交详情失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        Ok(map_gitee_detail(detail))
+    }
+}
+
+/// 把 Gitee 提交详情响应映射为统一的 `CommitDetail`。
+fn map_gitee_detail(d: GiteeCommitDetailResp) -> CommitDetail {
+    let author = d.commit.author;
+    let committer = d.commit.committer;
+    let authored_at = author
+        .as_ref()
+        .and_then(|a| a.date.as_deref())
+        .and_then(parse_iso_datetime)
+        .unwrap_or_else(Utc::now);
+    let committed_at = committer
+        .as_ref()
+        .and_then(|a| a.date.as_deref())
+        .and_then(parse_iso_datetime);
+    let files = d
+        .files
+        .unwrap_or_default()
+        .into_iter()
+        .map(map_gitee_file)
+        .collect();
+    CommitDetail {
+        short_sha: d.sha.chars().take(7).collect(),
+        sha: d.sha,
+        message: d.commit.message,
+        author_name: author
+            .as_ref()
+            .and_then(|a| a.name.clone())
+            .unwrap_or_default(),
+        author_email: author
+            .as_ref()
+            .and_then(|a| a.email.clone())
+            .unwrap_or_default(),
+        authored_at,
+        committer_name: committer.as_ref().and_then(|a| a.name.clone()),
+        committer_email: committer.and_then(|a| a.email),
+        committed_at,
+        parent_shas: d.parents.into_iter().map(|p| p.sha).collect(),
+        html_url: d.html_url,
+        stats: d.stats.map(|s| CommitStats {
+            additions: s.additions,
+            deletions: s.deletions,
+            total: s.total,
+        }),
+        files,
+    }
+}
+
+/// 把 Gitee 单文件变更映射为统一的 `CommitFile`（含截断后的 diff）。
+fn map_gitee_file(f: GiteeFile) -> CommitFile {
+    let status = match f.status.as_str() {
+        "added" => CommitFileStatus::Added,
+        "removed" | "deleted" => CommitFileStatus::Deleted,
+        "renamed" => CommitFileStatus::Renamed,
+        _ => CommitFileStatus::Modified,
+    };
+    let (diff, truncated) = f.patch.map_or((None, false), |p| {
+        let (text, tr) = truncate_file_diff(&p);
+        (Some(text), tr)
+    });
+    CommitFile {
+        path: f.filename,
+        old_path: f.previous_filename,
+        status,
+        additions: f.additions,
+        deletions: f.deletions,
+        diff,
+        truncated,
     }
 }
 

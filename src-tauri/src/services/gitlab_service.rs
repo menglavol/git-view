@@ -18,8 +18,12 @@ use uuid::Uuid;
 
 use crate::errors::{GitViewError, Result};
 use crate::models::account::GitPlatform;
+use crate::models::git::{CommitDetail, CommitFile, CommitFileStatus, CommitStats, CommitSummary};
 use crate::models::repository::{RemoteRepository, Visibility};
-use crate::services::provider::{GitHostingProvider, RepositoryPage, UserProfile};
+use crate::services::provider::{
+    parse_iso_datetime, truncate_file_diff, CommitPage, GitHostingProvider, RepositoryPage,
+    UserProfile,
+};
 use crate::utils::redact::redact_token;
 
 /// 请求超时（秒）。
@@ -124,6 +128,47 @@ struct GitLabProjectResp {
 #[derive(Debug, Deserialize)]
 struct GitLabNamespace {
     path: String,
+}
+
+/// GitLab 提交对象字段子集（list 与单提交元信息共用）。
+#[derive(Debug, Deserialize)]
+struct GitLabCommitResp {
+    id: String,
+    short_id: String,
+    title: Option<String>,
+    message: Option<String>,
+    author_name: Option<String>,
+    author_email: Option<String>,
+    authored_date: Option<String>,
+    committer_name: Option<String>,
+    committer_email: Option<String>,
+    committed_date: Option<String>,
+    #[serde(default)]
+    parent_ids: Vec<String>,
+    web_url: Option<String>,
+    stats: Option<GitLabStats>,
+}
+
+/// GitLab 单提交 diff 端点的单文件项（无 per-file 增删数）。
+#[derive(Debug, Deserialize)]
+struct GitLabDiffResp {
+    old_path: String,
+    new_path: String,
+    diff: String,
+    #[serde(default)]
+    new_file: bool,
+    #[serde(default)]
+    deleted_file: bool,
+    #[serde(default)]
+    renamed_file: bool,
+}
+
+/// 提交增删行汇总。
+#[derive(Debug, Deserialize)]
+struct GitLabStats {
+    additions: u32,
+    deletions: u32,
+    total: u32,
 }
 
 #[async_trait]
@@ -236,6 +281,124 @@ impl GitHostingProvider for GitLabProvider {
 
         Ok(RepositoryPage { items, has_next })
     }
+
+    async fn list_commits(
+        &self,
+        repo: &RemoteRepository,
+        branch: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> Result<CommitPage> {
+        // GitLab 用 project id（remote_id）拼 URL，分支用 ref_name
+        let ref_name = branch.unwrap_or(&repo.default_branch);
+        let url = format!(
+            "{}/projects/{}/repository/commits?ref_name={}&per_page={}&page={}",
+            self.api_base_url.trim_end_matches('/'),
+            repo.remote_id,
+            ref_name,
+            per_page,
+            page,
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .send()
+            .await
+            .map_err(|e| map_request_error("GitLab", &e))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(map_status_error("GitLab", status.as_u16()));
+        }
+
+        // x-next-page 非空且 > 0 表示还有下一页
+        let next_page = resp
+            .headers()
+            .get("x-next-page")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u32>().ok());
+        let has_next = next_page.is_some_and(|n| n > 0);
+
+        let list: Vec<GitLabCommitResp> = resp.json().await.map_err(|e| {
+            GitViewError::Network(format!(
+                "解析 GitLab 提交列表失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        let items = list
+            .into_iter()
+            .map(|c| {
+                let authored_at = c
+                    .authored_date
+                    .as_deref()
+                    .and_then(parse_iso_datetime)
+                    .unwrap_or_else(Utc::now);
+                CommitSummary {
+                    short_sha: c.short_id,
+                    summary: c.title.unwrap_or_default(),
+                    author_name: c.author_name.unwrap_or_default(),
+                    authored_at,
+                    html_url: c.web_url,
+                    sha: c.id,
+                }
+            })
+            .collect();
+
+        Ok(CommitPage { items, has_next })
+    }
+
+    async fn get_commit_detail(&self, repo: &RemoteRepository, sha: &str) -> Result<CommitDetail> {
+        let base = self.api_base_url.trim_end_matches('/');
+
+        // 1) 提交元信息（message / 作者 / 提交者 / parent_ids / stats）
+        let meta_url = format!(
+            "{base}/projects/{}/repository/commits/{sha}",
+            repo.remote_id
+        );
+        let meta_resp = self
+            .client
+            .get(&meta_url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .send()
+            .await
+            .map_err(|e| map_request_error("GitLab", &e))?;
+        if !meta_resp.status().is_success() {
+            return Err(map_status_error("GitLab", meta_resp.status().as_u16()));
+        }
+        let commit: GitLabCommitResp = meta_resp.json().await.map_err(|e| {
+            GitViewError::Network(format!(
+                "解析 GitLab 提交详情失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        // 2) 提交 diff（GitLab 单独端点；每文件无增删数，只有 diff 文本与状态标志）
+        let diff_url = format!(
+            "{base}/projects/{}/repository/commits/{sha}/diff",
+            repo.remote_id
+        );
+        let diff_resp = self
+            .client
+            .get(&diff_url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .send()
+            .await
+            .map_err(|e| map_request_error("GitLab", &e))?;
+        if !diff_resp.status().is_success() {
+            return Err(map_status_error("GitLab", diff_resp.status().as_u16()));
+        }
+        let diffs: Vec<GitLabDiffResp> = diff_resp.json().await.map_err(|e| {
+            GitViewError::Network(format!(
+                "解析 GitLab 提交 diff 失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        Ok(map_gitlab_detail(commit, diffs))
+    }
 }
 
 // =====================================================================
@@ -298,6 +461,66 @@ pub fn derive_gitlab_api_url(web_url: &str) -> Result<String> {
 // =====================================================================
 // 错误映射（与 GitHub Provider 共用语义，但保留独立函数便于平台前缀注入）
 // =====================================================================
+
+/// 把 GitLab 提交元信息 + diff 端点结果合并为统一的 `CommitDetail`。
+fn map_gitlab_detail(c: GitLabCommitResp, diffs: Vec<GitLabDiffResp>) -> CommitDetail {
+    let authored_at = c
+        .authored_date
+        .as_deref()
+        .and_then(parse_iso_datetime)
+        .unwrap_or_else(Utc::now);
+    let committed_at = c.committed_date.as_deref().and_then(parse_iso_datetime);
+    let files = diffs.into_iter().map(map_gitlab_file).collect();
+    CommitDetail {
+        short_sha: c.short_id,
+        sha: c.id,
+        // message 含完整正文，缺失时回退 title
+        message: c.message.or(c.title).unwrap_or_default(),
+        author_name: c.author_name.unwrap_or_default(),
+        author_email: c.author_email.unwrap_or_default(),
+        authored_at,
+        committer_name: c.committer_name,
+        committer_email: c.committer_email,
+        committed_at,
+        parent_shas: c.parent_ids,
+        html_url: c.web_url,
+        stats: c.stats.map(|s| CommitStats {
+            additions: s.additions,
+            deletions: s.deletions,
+            total: s.total,
+        }),
+        files,
+    }
+}
+
+/// 把 GitLab diff 项映射为统一的 `CommitFile`（每文件增删数 GitLab 不提供，置 None）。
+fn map_gitlab_file(d: GitLabDiffResp) -> CommitFile {
+    let status = if d.new_file {
+        CommitFileStatus::Added
+    } else if d.deleted_file {
+        CommitFileStatus::Deleted
+    } else if d.renamed_file {
+        CommitFileStatus::Renamed
+    } else {
+        CommitFileStatus::Modified
+    };
+    // 仅重命名时保留旧路径
+    let old_path = if d.renamed_file {
+        Some(d.old_path)
+    } else {
+        None
+    };
+    let (diff, truncated) = truncate_file_diff(&d.diff);
+    CommitFile {
+        path: d.new_path,
+        old_path,
+        status,
+        additions: None,
+        deletions: None,
+        diff: Some(diff),
+        truncated,
+    }
+}
 
 fn map_request_error(platform: &str, e: &reqwest::Error) -> GitViewError {
     if e.is_timeout() {

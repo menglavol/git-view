@@ -16,8 +16,12 @@ use uuid::Uuid;
 
 use crate::errors::{GitViewError, Result};
 use crate::models::account::GitPlatform;
+use crate::models::git::{CommitDetail, CommitFile, CommitFileStatus, CommitStats, CommitSummary};
 use crate::models::repository::{RemoteRepository, Visibility};
-use crate::services::provider::{GitHostingProvider, RepositoryPage, UserProfile};
+use crate::services::provider::{
+    parse_iso_datetime, truncate_file_diff, CommitPage, GitHostingProvider, RepositoryPage,
+    UserProfile,
+};
 use crate::utils::redact::redact_token;
 
 /// GitHub API 默认基址（公有云）。
@@ -105,6 +109,67 @@ struct GitHubRepoResp {
 #[derive(Debug, Deserialize)]
 struct GitHubOwner {
     login: String,
+}
+
+/// GitHub 提交列表项字段子集。
+#[derive(Debug, Deserialize)]
+struct GitHubCommitListResp {
+    sha: String,
+    commit: GitHubCommitMeta,
+    html_url: Option<String>,
+}
+
+/// GitHub 提交详情字段子集（含 stats 与 files）。
+#[derive(Debug, Deserialize)]
+struct GitHubCommitDetailResp {
+    sha: String,
+    commit: GitHubCommitMeta,
+    html_url: Option<String>,
+    #[serde(default)]
+    parents: Vec<GitHubParent>,
+    stats: Option<GitHubStats>,
+    files: Option<Vec<GitHubFile>>,
+}
+
+/// 提交的 git 元信息（作者 / 提交者 / message）。
+#[derive(Debug, Deserialize)]
+struct GitHubCommitMeta {
+    message: String,
+    author: Option<GitHubGitActor>,
+    committer: Option<GitHubGitActor>,
+}
+
+/// git 操作者（作者或提交者）的姓名 / 邮箱 / 时间。
+#[derive(Debug, Deserialize)]
+struct GitHubGitActor {
+    name: Option<String>,
+    email: Option<String>,
+    date: Option<String>,
+}
+
+/// 父提交引用。
+#[derive(Debug, Deserialize)]
+struct GitHubParent {
+    sha: String,
+}
+
+/// 提交增删行汇总。
+#[derive(Debug, Deserialize)]
+struct GitHubStats {
+    additions: u32,
+    deletions: u32,
+    total: u32,
+}
+
+/// 单文件变更字段子集（patch 即 unified diff）。
+#[derive(Debug, Deserialize)]
+struct GitHubFile {
+    filename: String,
+    status: String,
+    additions: Option<u32>,
+    deletions: Option<u32>,
+    patch: Option<String>,
+    previous_filename: Option<String>,
 }
 
 #[async_trait]
@@ -221,6 +286,189 @@ impl GitHostingProvider for GitHubProvider {
             .collect();
 
         Ok(RepositoryPage { items, has_next })
+    }
+
+    async fn list_commits(
+        &self,
+        repo: &RemoteRepository,
+        branch: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> Result<CommitPage> {
+        // branch 缺省回退仓库默认分支
+        let sha = branch.unwrap_or(&repo.default_branch);
+        let url = format!(
+            "{}/repos/{}/{}/commits?sha={}&per_page={}&page={}",
+            self.api_base_url.trim_end_matches('/'),
+            repo.owner,
+            repo.name,
+            sha,
+            per_page,
+            page,
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.token)
+            .header(header::ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .await
+            .map_err(|e| map_request_error("GitHub", &e))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(map_status_error("GitHub", status.as_u16()));
+        }
+
+        // Link 头含 rel="next" 表示还有下一页
+        let has_next = resp
+            .headers()
+            .get("link")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|h| h.contains("rel=\"next\""));
+
+        let list: Vec<GitHubCommitListResp> = resp.json().await.map_err(|e| {
+            GitViewError::Network(format!(
+                "解析 GitHub 提交列表失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        let items = list
+            .into_iter()
+            .map(|c| {
+                // 作者时间缺失时回退当前时间（GitHub 极少缺省）
+                let authored_at = c
+                    .commit
+                    .author
+                    .as_ref()
+                    .and_then(|a| a.date.as_deref())
+                    .and_then(parse_iso_datetime)
+                    .unwrap_or_else(Utc::now);
+                CommitSummary {
+                    short_sha: c.sha.chars().take(7).collect(),
+                    summary: c.commit.message.lines().next().unwrap_or("").to_string(),
+                    author_name: c
+                        .commit
+                        .author
+                        .as_ref()
+                        .and_then(|a| a.name.clone())
+                        .unwrap_or_default(),
+                    authored_at,
+                    html_url: c.html_url,
+                    sha: c.sha,
+                }
+            })
+            .collect();
+
+        Ok(CommitPage { items, has_next })
+    }
+
+    async fn get_commit_detail(&self, repo: &RemoteRepository, sha: &str) -> Result<CommitDetail> {
+        let url = format!(
+            "{}/repos/{}/{}/commits/{}",
+            self.api_base_url.trim_end_matches('/'),
+            repo.owner,
+            repo.name,
+            sha,
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.token)
+            .header(header::ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .await
+            .map_err(|e| map_request_error("GitHub", &e))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(map_status_error("GitHub", status.as_u16()));
+        }
+
+        let detail: GitHubCommitDetailResp = resp.json().await.map_err(|e| {
+            GitViewError::Network(format!(
+                "解析 GitHub 提交详情失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        Ok(map_github_detail(detail))
+    }
+}
+
+/// 把 GitHub 提交详情响应映射为统一的 `CommitDetail`。
+fn map_github_detail(d: GitHubCommitDetailResp) -> CommitDetail {
+    let author = d.commit.author;
+    let committer = d.commit.committer;
+    // 作者时间缺失回退当前时间；提交者时间可空
+    let authored_at = author
+        .as_ref()
+        .and_then(|a| a.date.as_deref())
+        .and_then(parse_iso_datetime)
+        .unwrap_or_else(Utc::now);
+    let committed_at = committer
+        .as_ref()
+        .and_then(|a| a.date.as_deref())
+        .and_then(parse_iso_datetime);
+    let files = d
+        .files
+        .unwrap_or_default()
+        .into_iter()
+        .map(map_github_file)
+        .collect();
+    CommitDetail {
+        short_sha: d.sha.chars().take(7).collect(),
+        sha: d.sha,
+        message: d.commit.message,
+        author_name: author
+            .as_ref()
+            .and_then(|a| a.name.clone())
+            .unwrap_or_default(),
+        author_email: author
+            .as_ref()
+            .and_then(|a| a.email.clone())
+            .unwrap_or_default(),
+        authored_at,
+        committer_name: committer.as_ref().and_then(|a| a.name.clone()),
+        committer_email: committer.and_then(|a| a.email),
+        committed_at,
+        parent_shas: d.parents.into_iter().map(|p| p.sha).collect(),
+        html_url: d.html_url,
+        stats: d.stats.map(|s| CommitStats {
+            additions: s.additions,
+            deletions: s.deletions,
+            total: s.total,
+        }),
+        files,
+    }
+}
+
+/// 把 GitHub 单文件变更映射为统一的 `CommitFile`（含截断后的 diff）。
+fn map_github_file(f: GitHubFile) -> CommitFile {
+    let status = match f.status.as_str() {
+        "added" => CommitFileStatus::Added,
+        "removed" => CommitFileStatus::Deleted,
+        "renamed" => CommitFileStatus::Renamed,
+        // modified / changed / copied 等统一归为修改
+        _ => CommitFileStatus::Modified,
+    };
+    let (diff, truncated) = f.patch.map_or((None, false), |p| {
+        let (text, tr) = truncate_file_diff(&p);
+        (Some(text), tr)
+    });
+    CommitFile {
+        path: f.filename,
+        old_path: f.previous_filename,
+        status,
+        additions: f.additions,
+        deletions: f.deletions,
+        diff,
+        truncated,
     }
 }
 

@@ -28,7 +28,7 @@ use tauri::State;
 
 use crate::db::pool::DbPool;
 use crate::errors::{GitViewError, Result};
-use crate::models::git::{Branch, CommitInfo, GitStatus};
+use crate::models::git::{Branch, CommitDetail, CommitInfo, GitStatus};
 use crate::models::operation_log::{OperationStatus, OperationType};
 use crate::services::git_cli_service::GitCliService;
 use crate::services::git_reader_service::{self, DiffResult};
@@ -156,6 +156,19 @@ pub async fn git_log(
 ) -> Result<Vec<CommitInfo>> {
     let path = resolve_repo_path(&state, &repo_id)?;
     git_reader_service::log(&path, page.unwrap_or(0), page_size.unwrap_or(50)).await
+}
+
+/// 获取单个提交的详情（元信息 + 改动文件 + 每文件 diff）。
+///
+/// 与状态读取同属只读操作，不写 operation_log。
+#[tauri::command]
+pub async fn git_commit_detail(
+    state: State<'_, AppState>,
+    repo_id: String,
+    sha: String,
+) -> Result<CommitDetail> {
+    let path = resolve_repo_path(&state, &repo_id)?;
+    git_reader_service::commit_detail(&path, &sha).await
 }
 
 // =====================================================================

@@ -86,6 +86,112 @@ pub struct CommitInfo {
     pub parent_shas: Vec<String>,
 }
 
+/// 提交列表项（远程提交历史用；本地由 `CommitInfo` 映射成同形态喂给列表组件）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitSummary {
+    /// 提交完整哈希
+    pub sha: String,
+    /// 提交短哈希
+    pub short_sha: String,
+    /// 提交标题（首行）
+    pub summary: String,
+    /// 作者姓名
+    pub author_name: String,
+    /// 提交时间
+    pub authored_at: DateTime<Utc>,
+    /// 平台网页地址（远程有值，本地为 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html_url: Option<String>,
+}
+
+/// 单个提交内改动文件的状态（提交语义：仅增 / 改 / 删 / 重命名）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitFileStatus {
+    /// 新增文件
+    Added,
+    /// 修改文件
+    Modified,
+    /// 删除文件
+    Deleted,
+    /// 重命名文件
+    Renamed,
+}
+
+/// 提交改动文件（含每文件 diff）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitFile {
+    /// 文件相对仓库根的路径
+    pub path: String,
+    /// 重命名前路径（仅重命名状态有值）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    /// 文件变更状态
+    pub status: CommitFileStatus,
+    /// 新增行数（GitLab 单提交 diff 不提供，置 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additions: Option<u32>,
+    /// 删除行数（GitLab 单提交 diff 不提供，置 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<u32>,
+    /// 该文件的 unified diff 文本（可能因体量被截断）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    /// 该文件 diff 是否被截断
+    pub truncated: bool,
+}
+
+/// 提交增删行汇总。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitStats {
+    /// 总新增行
+    pub additions: u32,
+    /// 总删除行
+    pub deletions: u32,
+    /// 合计变更行
+    pub total: u32,
+}
+
+/// 提交详情（远程与本地共用：元信息 + 改动文件 + 每文件 diff）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDetail {
+    /// 提交完整哈希
+    pub sha: String,
+    /// 提交短哈希
+    pub short_sha: String,
+    /// 完整提交信息（含正文）
+    pub message: String,
+    /// 作者姓名
+    pub author_name: String,
+    /// 作者邮箱
+    pub author_email: String,
+    /// 作者提交时间
+    pub authored_at: DateTime<Utc>,
+    /// 提交者姓名（可空）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub committer_name: Option<String>,
+    /// 提交者邮箱（可空）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub committer_email: Option<String>,
+    /// 提交者时间（可空）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub committed_at: Option<DateTime<Utc>>,
+    /// 父提交哈希（合并提交有多个）
+    pub parent_shas: Vec<String>,
+    /// 平台网页地址（远程有值，本地为 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html_url: Option<String>,
+    /// 增删行汇总（可空）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats: Option<CommitStats>,
+    /// 改动文件列表
+    pub files: Vec<CommitFile>,
+}
+
 /// 工作区聚合状态（一次性返回给前端的概览数据）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
