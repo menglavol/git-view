@@ -118,7 +118,8 @@ struct GitLabProjectResp {
     namespace: GitLabNamespace,
     description: Option<String>,
     default_branch: Option<String>,
-    visibility: String,
+    /// 项目可见性；精简响应或低权限下可能缺省，用 Option 容错（缺省按私有处理）
+    visibility: Option<String>,
     web_url: String,
     http_url_to_repo: String,
     ssh_url_to_repo: Option<String>,
@@ -209,8 +210,9 @@ impl GitHostingProvider for GitLabProvider {
         per_page: u32,
         account_id: &str,
     ) -> Result<RepositoryPage> {
+        // 不使用 simple=true：精简响应不含 visibility 字段，会触发反序列化缺字段失败
         let url = format!(
-            "{}/projects?membership=true&simple=true&per_page={}&page={}&order_by=last_activity_at&sort=desc",
+            "{}/projects?membership=true&per_page={}&page={}&order_by=last_activity_at&sort=desc",
             self.api_base_url.trim_end_matches('/'),
             per_page,
             page,
@@ -253,9 +255,10 @@ impl GitHostingProvider for GitLabProvider {
                     .as_deref()
                     .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                     .map(|dt| dt.with_timezone(&Utc));
-                let visibility = match p.visibility.as_str() {
-                    "public" => Visibility::Public,
-                    "internal" => Visibility::Internal,
+                let visibility = match p.visibility.as_deref() {
+                    Some("public") => Visibility::Public,
+                    Some("internal") => Visibility::Internal,
+                    // 缺省 / private / 未知值一律按私有处理（安全默认，避免误暴露）
                     _ => Visibility::Private,
                 };
                 RemoteRepository {

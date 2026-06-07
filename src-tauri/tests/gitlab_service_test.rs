@@ -10,6 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use gitview_lib::errors::GitViewError;
+use gitview_lib::models::repository::Visibility;
 use gitview_lib::services::gitlab_service::{
     derive_gitlab_api_url, GitLabClientConfig, GitLabProvider,
 };
@@ -95,6 +96,87 @@ async fn error_message_does_not_leak_token() {
         !display.contains(TEST_TOKEN),
         "错误消息不应包含 token 明文：{display}"
     );
+}
+
+/// list_repositories：完整响应（含 visibility）正确解析与映射，x-next-page 驱动 has_next
+#[tokio::test]
+async fn list_repositories_full_response_maps_fields() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/projects"))
+        .and(header("private-token", TEST_TOKEN))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-next-page", "2")
+                .set_body_json(serde_json::json!([{
+                    "id": 101,
+                    "path_with_namespace": "group/proj",
+                    "name": "proj",
+                    "namespace": { "path": "group" },
+                    "description": "demo",
+                    "default_branch": "main",
+                    "visibility": "public",
+                    "web_url": "https://gitlab.example.com/group/proj",
+                    "http_url_to_repo": "https://gitlab.example.com/group/proj.git",
+                    "ssh_url_to_repo": "git@gitlab.example.com:group/proj.git",
+                    "last_activity_at": "2024-01-02T03:04:05.000Z",
+                }])),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = GitLabProvider::new(client_config(&server.uri()), TEST_TOKEN.to_string())
+        .expect("应能构造");
+    let page = provider
+        .list_repositories(1, 20, "acc-1")
+        .await
+        .expect("应成功");
+
+    assert!(page.has_next, "x-next-page=2 时应有下一页");
+    assert_eq!(page.items.len(), 1);
+    let repo = &page.items[0];
+    assert_eq!(repo.full_name, "group/proj");
+    assert_eq!(repo.name, "proj");
+    assert_eq!(repo.owner, "group");
+    assert_eq!(repo.default_branch, "main");
+    assert!(matches!(repo.visibility, Visibility::Public));
+}
+
+/// list_repositories：精简响应（缺 visibility / default_branch）必须仍能解析
+///
+/// 这是对 simple=true 缺字段导致反序列化崩溃的回归防护：缺省字段应安全回退而非报错。
+#[tokio::test]
+async fn list_repositories_simple_response_without_visibility_succeeds() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/projects"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!([{
+                "id": 202,
+                "path_with_namespace": "user/simple",
+                "name": "simple",
+                "namespace": { "path": "user" },
+                "web_url": "https://gitlab.example.com/user/simple",
+                "http_url_to_repo": "https://gitlab.example.com/user/simple.git",
+            }])),
+        )
+        .mount(&server)
+        .await;
+
+    let provider = GitLabProvider::new(client_config(&server.uri()), TEST_TOKEN.to_string())
+        .expect("应能构造");
+    let page = provider
+        .list_repositories(1, 20, "acc-1")
+        .await
+        .expect("缺 visibility 字段时也应成功解析，而非报错");
+
+    assert!(!page.has_next, "无 x-next-page 头时应无下一页");
+    assert_eq!(page.items.len(), 1);
+    let repo = &page.items[0];
+    // 缺省 visibility 安全回退私有
+    assert!(matches!(repo.visibility, Visibility::Private));
+    // 缺省 default_branch 回退 main
+    assert_eq!(repo.default_branch, "main");
 }
 
 /// derive_gitlab_api_url 表驱动测试（与单元测试互补，强调集成层契约稳定）
