@@ -16,6 +16,7 @@ export type GitViewErrorCode =
   | 'ApiUrlInvalid'
   | 'Network'
   | 'TlsCert'
+  | 'ResponseDecode'
   | 'Forbidden'
   | 'NotFound'
   | 'GitCommand'
@@ -39,6 +40,7 @@ const ERROR_MESSAGES: Record<GitViewErrorCode, string> = {
   ApiUrlInvalid: 'API 地址格式错误，请检查实例 URL',
   Network: '网络异常，请检查网络连接或代理设置',
   TlsCert: 'TLS 证书校验失败，可在账号设置中确认是否信任自签名证书',
+  ResponseDecode: '服务器返回了非预期的数据格式，请检查 API 地址是否正确或实例版本是否兼容',
   Forbidden: '权限不足，无法访问该资源',
   NotFound: '资源不存在',
   GitCommand: 'Git 命令执行失败',

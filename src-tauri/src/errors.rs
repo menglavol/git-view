@@ -52,6 +52,15 @@ pub enum GitViewError {
     #[error("TLS 证书错误：{0}")]
     TlsCert(String),
 
+    /// 响应解析失败（HTTP 请求成功但响应体不符合预期结构，或返回了非 JSON 内容）。
+    ///
+    /// 与 `Network` 严格区分：连接已建立、状态码也正常，问题出在响应**内容**上。
+    /// 常见诱因是 API 地址配错（打到了网页而非 API）、实例版本字段差异，或被
+    /// 反向代理 / SSO 拦截返回登录页。对这类错误提示"检查网络或代理"会误导用户，
+    /// 故单列一类以便前端给出"检查 API 地址 / 实例兼容性"的针对性引导。
+    #[error("响应解析失败：{0}")]
+    ResponseDecode(String),
+
     /// 权限不足（HTTP 403 且非 Token 失效场景，如仓库私有未授权访问）。
     #[error("权限不足")]
     Forbidden,
@@ -158,7 +167,8 @@ impl From<reqwest::Error> for GitViewError {
         } else if value.is_connect() {
             Self::Network("连接失败，请检查网络或代理设置".to_string())
         } else if value.is_decode() {
-            Self::Network("响应解析失败".to_string())
+            // 响应体解析失败：归入 ResponseDecode 而非 Network，避免误导用户排查网络
+            Self::ResponseDecode("响应内容无法解析".to_string())
         } else {
             // 兜底：使用 reqwest 自身的 Display 输出，但去掉可能的 URL 引用
             Self::Network(strip_url_from_message(&value.to_string()))
@@ -233,6 +243,12 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("\"code\":\"Database\""));
         assert!(json.contains("conn lost"));
+
+        // ResponseDecode 必须稳定序列化为该 code，前端 error-messages.ts 依赖此字面量映射文案
+        let err = GitViewError::ResponseDecode("bad json".to_string());
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"code\":\"ResponseDecode\""));
+        assert!(json.contains("bad json"));
     }
 
     /// 验证 rusqlite::Error::QueryReturnedNoRows → NotFound

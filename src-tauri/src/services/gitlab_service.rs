@@ -191,7 +191,7 @@ impl GitHostingProvider for GitLabProvider {
         }
 
         let user: GitLabUserResp = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitLab 用户响应失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -238,7 +238,7 @@ impl GitHostingProvider for GitLabProvider {
             .and_then(|s| s.parse::<u32>().ok());
 
         let projects: Vec<GitLabProjectResp> = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitLab 项目列表失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -325,7 +325,7 @@ impl GitHostingProvider for GitLabProvider {
         let has_next = next_page.is_some_and(|n| n > 0);
 
         let list: Vec<GitLabCommitResp> = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitLab 提交列表失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -372,7 +372,7 @@ impl GitHostingProvider for GitLabProvider {
             return Err(map_status_error("GitLab", meta_resp.status().as_u16()));
         }
         let commit: GitLabCommitResp = meta_resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitLab 提交详情失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -394,7 +394,7 @@ impl GitHostingProvider for GitLabProvider {
             return Err(map_status_error("GitLab", diff_resp.status().as_u16()));
         }
         let diffs: Vec<GitLabDiffResp> = diff_resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitLab 提交 diff 失败：{}",
                 redact_token(&e.to_string())
             ))

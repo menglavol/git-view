@@ -193,7 +193,7 @@ impl GitHostingProvider for GitHubProvider {
         }
 
         let user: GitHubUserResp = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitHub 用户响应失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -241,7 +241,7 @@ impl GitHostingProvider for GitHubProvider {
             .map(String::from);
 
         let repos: Vec<GitHubRepoResp> = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitHub 仓库列表失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -330,7 +330,7 @@ impl GitHostingProvider for GitHubProvider {
             .is_some_and(|h| h.contains("rel=\"next\""));
 
         let list: Vec<GitHubCommitListResp> = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitHub 提交列表失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -391,7 +391,7 @@ impl GitHostingProvider for GitHubProvider {
         }
 
         let detail: GitHubCommitDetailResp = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 GitHub 提交详情失败：{}",
                 redact_token(&e.to_string())
             ))

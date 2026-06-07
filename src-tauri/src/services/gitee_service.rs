@@ -214,7 +214,7 @@ impl GitHostingProvider for GiteeProvider {
         }
 
         let user: GiteeUserResp = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 Gitee 用户响应失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -268,7 +268,7 @@ impl GitHostingProvider for GiteeProvider {
             .and_then(|s| s.parse::<u32>().ok());
 
         let repos: Vec<GiteeRepoResp> = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 Gitee 仓库列表失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -357,7 +357,7 @@ impl GitHostingProvider for GiteeProvider {
         }
 
         let list: Vec<GiteeCommitListResp> = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 Gitee 提交列表失败：{}",
                 redact_token(&e.to_string())
             ))
@@ -424,7 +424,7 @@ impl GitHostingProvider for GiteeProvider {
         }
 
         let detail: GiteeCommitDetailResp = resp.json().await.map_err(|e| {
-            GitViewError::Network(format!(
+            GitViewError::ResponseDecode(format!(
                 "解析 Gitee 提交详情失败：{}",
                 redact_token(&e.to_string())
             ))
