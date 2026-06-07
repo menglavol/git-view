@@ -20,7 +20,7 @@
 | 单仓库工作流：status / diff / stage / unstage / commit | ✅ |
 | fetch / pull / push | ✅ |
 | 分支列表与切换、新建分支 | ✅ |
-| 提交历史(简版列表) | ✅ |
+| 提交历史(列表 + 提交详情 / 逐文件 diff，远程三平台 + 本地) | ✅ |
 | 操作日志与中文错误提示、敏感信息脱敏 | ✅ |
 | 设置中心(通用 / Git / 网络 / 外部工具 / 账号与安全) | ✅ |
 | 首页仪表盘 | ✅ |
@@ -53,7 +53,7 @@
 | revert | ⬜ |
 | commit amend | ⬜ |
 | reset(soft / mixed / hard) | ⬜ |
-| commit history(完整) | 🚧(V1 已含简版) |
+| commit history(完整) | 🚧(V1 已含列表 + 提交详情 / diff) |
 | commit graph 初版 | ⬜ |
 | 冲突检测 | ⬜ |
 | 基础冲突解决 | ⬜ |
