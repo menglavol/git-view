@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{GitViewError, Result};
 use crate::models::git::{CommitDetail, CommitSummary};
-use crate::models::repository::RemoteRepository;
+use crate::models::repository::{CreateRepoRequest, RemoteRepository};
 
 /// 平台用户档案（连接测试与账号同步用）。
 ///
@@ -113,6 +113,21 @@ pub trait GitHostingProvider: Send + Sync {
         _sha: &str,
     ) -> Result<CommitDetail> {
         Err(GitViewError::Internal("该平台暂不支持提交详情".to_string()))
+    }
+
+    /// 在平台创建一个**空**远程仓库，返回映射后的 `RemoteRepository`。
+    ///
+    /// `account_id` 用于把返回结果关联到本地账号行（与 `list_repositories` 一致）。
+    /// 实现必须关闭平台自动初始化（不带 README / 初始 commit）——否则远程已有提交，
+    /// 「发布到远程」后续的 `git push` 会因 non-fast-forward 失败。
+    ///
+    /// 默认实现表示该平台尚未支持创建仓库。
+    async fn create_repository(
+        &self,
+        _req: &CreateRepoRequest,
+        _account_id: &str,
+    ) -> Result<RemoteRepository> {
+        Err(GitViewError::Internal("该平台暂不支持创建仓库".to_string()))
     }
 }
 

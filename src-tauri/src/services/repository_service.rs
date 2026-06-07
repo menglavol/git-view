@@ -164,6 +164,77 @@ pub fn toggle_favorite(pool: &DbPool, repo_id: &str) -> Result<bool> {
     })
 }
 
+/// 插入「发布到远程」新建的远程仓库记录。
+///
+/// 用与全量同步一致的 upsert（`ON CONFLICT(account_id, remote_id)`）：即便该账户
+/// 随后触发同步也不会与本记录冲突或产生重复行。
+pub fn insert_remote_repository(pool: &DbPool, repo: &RemoteRepository) -> Result<()> {
+    let repo = repo.clone();
+    pool.with_conn(move |conn| {
+        conn.execute(
+            "INSERT INTO remote_repositories (
+                id, account_id, platform, remote_id, full_name, name, owner,
+                description, visibility, default_branch, html_url, ssh_url,
+                clone_url, is_favorite, last_pushed_at, synced_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            ON CONFLICT(account_id, remote_id) DO UPDATE SET
+                full_name = excluded.full_name,
+                name = excluded.name,
+                owner = excluded.owner,
+                description = excluded.description,
+                visibility = excluded.visibility,
+                default_branch = excluded.default_branch,
+                html_url = excluded.html_url,
+                ssh_url = excluded.ssh_url,
+                clone_url = excluded.clone_url,
+                last_pushed_at = excluded.last_pushed_at,
+                synced_at = excluded.synced_at",
+            params![
+                repo.id,
+                repo.account_id,
+                serialize_platform(repo.platform),
+                repo.remote_id,
+                repo.full_name,
+                repo.name,
+                repo.owner,
+                repo.description,
+                serialize_visibility(repo.visibility),
+                repo.default_branch,
+                repo.html_url,
+                repo.ssh_url,
+                repo.clone_url,
+                i64::from(repo.is_favorite),
+                repo.last_pushed_at.map(|dt| dt.to_rfc3339()),
+                repo.synced_at.to_rfc3339(),
+            ],
+        )
+        .map_err(GitViewError::from)?;
+        Ok(())
+    })
+}
+
+/// 把本地仓库关联到远程仓库（「发布到远程」收尾）：写入 remote_repository_id 与 remote_url。
+pub fn link_local_to_remote(
+    pool: &DbPool,
+    local_id: &str,
+    remote_repository_id: &str,
+    remote_url: &str,
+) -> Result<()> {
+    let local_id = local_id.to_string();
+    let remote_repository_id = remote_repository_id.to_string();
+    let remote_url = remote_url.to_string();
+    pool.with_conn(move |conn| {
+        conn.execute(
+            "UPDATE local_repositories
+             SET remote_repository_id = ?1, remote_url = ?2
+             WHERE id = ?3",
+            params![remote_repository_id, remote_url, local_id],
+        )
+        .map_err(GitViewError::from)?;
+        Ok(())
+    })
+}
+
 // =====================================================================
 // 行映射
 // =====================================================================
@@ -181,6 +252,24 @@ fn deserialize_visibility(s: &str) -> Visibility {
         "public" => Visibility::Public,
         "internal" => Visibility::Internal,
         _ => Visibility::Private,
+    }
+}
+
+/// 与 `deserialize_platform` 对称：落库远程仓库时把枚举转回字符串。
+const fn serialize_platform(p: GitPlatform) -> &'static str {
+    match p {
+        GitPlatform::Github => "github",
+        GitPlatform::Gitlab => "gitlab",
+        GitPlatform::Gitee => "gitee",
+    }
+}
+
+/// 与 `deserialize_visibility` 对称：落库远程仓库时把枚举转回字符串。
+const fn serialize_visibility(v: Visibility) -> &'static str {
+    match v {
+        Visibility::Public => "public",
+        Visibility::Private => "private",
+        Visibility::Internal => "internal",
     }
 }
 
@@ -356,6 +445,70 @@ mod tests {
             "private",
             false,
             Some("documentation"),
+        );
+    }
+
+    /// insert_remote_repository 后能按 id 读回，字段往返一致（「发布到远程」落库）
+    #[test]
+    fn insert_remote_repository_then_get_roundtrips() {
+        let pool = fresh_pool();
+        seed_account(&pool, "acc-1", "github");
+        let repo = RemoteRepository {
+            id: "rr-1".to_string(),
+            account_id: "acc-1".to_string(),
+            platform: GitPlatform::Github,
+            remote_id: "12345".to_string(),
+            full_name: "alice/new".to_string(),
+            name: "new".to_string(),
+            owner: "alice".to_string(),
+            description: Some("demo".to_string()),
+            visibility: Visibility::Private,
+            default_branch: "main".to_string(),
+            html_url: "https://github.com/alice/new".to_string(),
+            ssh_url: Some("git@github.com:alice/new.git".to_string()),
+            clone_url: "https://github.com/alice/new.git".to_string(),
+            is_favorite: false,
+            last_pushed_at: None,
+            synced_at: Utc::now(),
+        };
+        insert_remote_repository(&pool, &repo).unwrap();
+
+        let got = get_remote_repository(&pool, "rr-1").unwrap();
+        assert_eq!(got.full_name, "alice/new");
+        assert_eq!(got.remote_id, "12345");
+        assert!(matches!(got.visibility, Visibility::Private));
+        assert_eq!(got.ssh_url.as_deref(), Some("git@github.com:alice/new.git"));
+    }
+
+    /// link_local_to_remote 把本地仓库关联到远程：写入 remote_repository_id 与 remote_url
+    #[test]
+    fn link_local_to_remote_sets_association() {
+        let pool = fresh_pool();
+        seed_account(&pool, "acc-1", "github");
+        seed_repo(
+            &pool, "rr-1", "acc-1", "github", "alice", "new", "private", false, None,
+        );
+        // 插入一个尚无远程关联的本地仓库
+        let now = Utc::now().to_rfc3339();
+        pool.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO local_repositories (
+                    id, remote_repository_id, local_path, current_branch,
+                    remote_url, status, last_checked_at, created_at
+                ) VALUES ('lr-1', NULL, '/tmp/gitview-test-link', 'main', NULL, 'clean', ?1, ?1)",
+                params![now],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        link_local_to_remote(&pool, "lr-1", "rr-1", "https://github.com/alice/new.git").unwrap();
+
+        let local = load_local_repository(&pool, "lr-1").unwrap();
+        assert_eq!(local.remote_repository_id.as_deref(), Some("rr-1"));
+        assert_eq!(
+            local.remote_url.as_deref(),
+            Some("https://github.com/alice/new.git")
         );
     }
 
@@ -621,6 +774,10 @@ pub fn list_local_repositories(pool: &DbPool) -> Result<Vec<LocalRepository>> {
 }
 
 /// 刷新单个仓库状态。
+///
+/// 同步项：工作区状态、当前分支、以及 origin 远端 URL。其中 remote_url 与 git 实时
+/// 对齐——外部执行 `git remote add/remove` 后，刷新即回填或清空 remote_url，
+/// 「发布到远程」按钮（前端按 remoteUrl 显隐）据此自动恢复正确。
 pub async fn refresh_local_repository_status(pool: &DbPool, id: &str) -> Result<LocalRepository> {
     let repo = load_local_repository(pool, id)?;
     let path = Path::new(&repo.local_path);
@@ -633,14 +790,21 @@ pub async fn refresh_local_repository_status(pool: &DbPool, id: &str) -> Result<
         ("unknown".to_string(), None)
     };
 
+    // 重新读取 origin 远端 URL，使数据库跟随 git 层真实状态（无 origin / 目录缺失时为 None）
+    let remote_url = if path.exists() {
+        read_remote_url(path).await.ok()
+    } else {
+        None
+    };
+
     let now = Utc::now().to_rfc3339();
     let id_owned = id.to_string();
     pool.with_conn(move |conn| {
         conn.execute(
             "UPDATE local_repositories
-             SET status = ?1, current_branch = ?2, last_checked_at = ?3
-             WHERE id = ?4",
-            params![status_str, branch, now, id_owned],
+             SET status = ?1, current_branch = ?2, remote_url = ?3, last_checked_at = ?4
+             WHERE id = ?5",
+            params![status_str, branch, remote_url, now, id_owned],
         )
         .map_err(GitViewError::from)?;
         Ok(())

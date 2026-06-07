@@ -81,6 +81,13 @@ pub enum GitViewError {
     #[error("路径冲突：{0}")]
     PathConflict(String),
 
+    /// 远程仓库名称已被占用（创建仓库时平台返回「已存在」：GitHub 422 / GitLab、Gitee 400）。
+    ///
+    /// 单列一类而非复用 PathConflict：前端据此专门提示「改用其他仓库名」，
+    /// 与本地路径冲突（建议换目录）的处理路径完全不同。
+    #[error("远程仓库名称已存在")]
+    RepoNameTaken,
+
     /// 路径不存在（用户输入的目录不可达、本地仓库被外部删除等）。
     #[error("路径不存在：{0}")]
     PathMissing(String),
@@ -249,6 +256,11 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("\"code\":\"ResponseDecode\""));
         assert!(json.contains("bad json"));
+
+        // RepoNameTaken 无 detail，但 code 必须稳定：前端据此映射「改名」提示
+        let err = GitViewError::RepoNameTaken;
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"code\":\"RepoNameTaken\""));
     }
 
     /// 验证 rusqlite::Error::QueryReturnedNoRows → NotFound

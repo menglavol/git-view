@@ -19,7 +19,7 @@ use uuid::Uuid;
 use crate::errors::{GitViewError, Result};
 use crate::models::account::GitPlatform;
 use crate::models::git::{CommitDetail, CommitFile, CommitFileStatus, CommitStats, CommitSummary};
-use crate::models::repository::{RemoteRepository, Visibility};
+use crate::models::repository::{CreateRepoRequest, RemoteRepository, Visibility};
 use crate::services::provider::{
     parse_iso_datetime, truncate_file_diff, CommitPage, GitHostingProvider, RepositoryPage,
     UserProfile,
@@ -249,37 +249,7 @@ impl GitHostingProvider for GitLabProvider {
 
         let items: Vec<RemoteRepository> = projects
             .into_iter()
-            .map(|p| {
-                let pushed_at = p
-                    .last_activity_at
-                    .as_deref()
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let visibility = match p.visibility.as_deref() {
-                    Some("public") => Visibility::Public,
-                    Some("internal") => Visibility::Internal,
-                    // 缺省 / private / 未知值一律按私有处理（安全默认，避免误暴露）
-                    _ => Visibility::Private,
-                };
-                RemoteRepository {
-                    id: Uuid::new_v4().to_string(),
-                    account_id: account_id.to_string(),
-                    platform: GitPlatform::Gitlab,
-                    remote_id: p.id.to_string(),
-                    full_name: p.path_with_namespace,
-                    name: p.name,
-                    owner: p.namespace.path,
-                    description: p.description,
-                    visibility,
-                    default_branch: p.default_branch.unwrap_or_else(|| "main".to_string()),
-                    html_url: p.web_url,
-                    ssh_url: p.ssh_url_to_repo,
-                    clone_url: p.http_url_to_repo,
-                    is_favorite: false,
-                    last_pushed_at: pushed_at,
-                    synced_at: now,
-                }
-            })
+            .map(|p| map_gitlab_project(p, account_id, now))
             .collect();
 
         Ok(RepositoryPage { items, has_next })
@@ -402,6 +372,60 @@ impl GitHostingProvider for GitLabProvider {
 
         Ok(map_gitlab_detail(commit, diffs))
     }
+
+    async fn create_repository(
+        &self,
+        req: &CreateRepoRequest,
+        account_id: &str,
+    ) -> Result<RemoteRepository> {
+        let url = format!("{}/projects", self.api_base_url.trim_end_matches('/'));
+        // initialize_with_readme=false 建空仓；GitLab 原生支持三态可见性，直接透传。
+        let visibility = match req.visibility {
+            Visibility::Public => "public",
+            Visibility::Internal => "internal",
+            Visibility::Private => "private",
+        };
+        let body = serde_json::json!({
+            "name": req.name,
+            "path": req.name,
+            "description": req.description,
+            "visibility": visibility,
+            "initialize_with_readme": false,
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("PRIVATE-TOKEN", &self.token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| map_request_error("GitLab", &e))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            // GitLab 重名以 400 返回，body 含 "has already been taken"
+            if status.as_u16() == 400 {
+                let detail = redact_token(&resp.text().await.unwrap_or_default());
+                if detail.contains("has already been taken") {
+                    return Err(GitViewError::RepoNameTaken);
+                }
+                return Err(GitViewError::Network(format!(
+                    "GitLab 创建项目失败：{detail}"
+                )));
+            }
+            return Err(map_status_error("GitLab", status.as_u16()));
+        }
+
+        let project: GitLabProjectResp = resp.json().await.map_err(|e| {
+            GitViewError::ResponseDecode(format!(
+                "解析 GitLab 创建项目响应失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        Ok(map_gitlab_project(project, account_id, Utc::now()))
+    }
 }
 
 // =====================================================================
@@ -464,6 +488,43 @@ pub fn derive_gitlab_api_url(web_url: &str) -> Result<String> {
 // =====================================================================
 // 错误映射（与 GitHub Provider 共用语义，但保留独立函数便于平台前缀注入）
 // =====================================================================
+
+/// 把 GitLab 项目响应映射为统一的 `RemoteRepository`（list 与 create 共用）。
+fn map_gitlab_project(
+    p: GitLabProjectResp,
+    account_id: &str,
+    now: DateTime<Utc>,
+) -> RemoteRepository {
+    let pushed_at = p
+        .last_activity_at
+        .as_deref()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+    let visibility = match p.visibility.as_deref() {
+        Some("public") => Visibility::Public,
+        Some("internal") => Visibility::Internal,
+        // 缺省 / private / 未知值一律按私有处理（安全默认，避免误暴露）
+        _ => Visibility::Private,
+    };
+    RemoteRepository {
+        id: Uuid::new_v4().to_string(),
+        account_id: account_id.to_string(),
+        platform: GitPlatform::Gitlab,
+        remote_id: p.id.to_string(),
+        full_name: p.path_with_namespace,
+        name: p.name,
+        owner: p.namespace.path,
+        description: p.description,
+        visibility,
+        default_branch: p.default_branch.unwrap_or_else(|| "main".to_string()),
+        html_url: p.web_url,
+        ssh_url: p.ssh_url_to_repo,
+        clone_url: p.http_url_to_repo,
+        is_favorite: false,
+        last_pushed_at: pushed_at,
+        synced_at: now,
+    }
+}
 
 /// 把 GitLab 提交元信息 + diff 端点结果合并为统一的 `CommitDetail`。
 fn map_gitlab_detail(c: GitLabCommitResp, diffs: Vec<GitLabDiffResp>) -> CommitDetail {

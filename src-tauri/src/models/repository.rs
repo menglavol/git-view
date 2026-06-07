@@ -83,6 +83,20 @@ pub struct RemoteRepository {
     pub synced_at: DateTime<Utc>,
 }
 
+/// 创建远程仓库的请求参数（「发布到远程」用）。
+///
+/// 首版仅支持个人 namespace（owner 由所选账户决定），故不含 owner / 组织字段。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateRepoRequest {
+    /// 仓库名（同时用作 GitLab 的 path slug）
+    pub name: String,
+    /// 仓库描述（可空）
+    pub description: Option<String>,
+    /// 可见性（public / private / internal；GitHub、Gitee 无 internal 时按 private 处理）
+    pub visibility: Visibility,
+}
+
 /// 本地仓库元数据。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

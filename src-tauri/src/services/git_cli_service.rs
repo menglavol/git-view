@@ -433,6 +433,98 @@ impl GitCliService {
     }
 
     // =====================================================================
+    // 发布到远程（remote add + 带凭据 push）
+    // =====================================================================
+
+    /// 添加一个远程（`git remote add <name> <url>`）。
+    ///
+    /// 「发布到远程」首步：把平台新建的仓库地址登记为本地 origin。
+    pub async fn add_remote(&self, repo: &Path, name: &str, url: &str) -> Result<()> {
+        let output = self
+            .run(&["remote", "add", name, url], Some(repo), &[])
+            .await?;
+        ensure_success(&output, "git remote add")
+    }
+
+    /// 推送当前分支到全新远程并设置 upstream（`git push -u <remote> <branch>`）。
+    ///
+    /// 与 [`Self::push`] 的关键区别：本方法面向**刚创建的 origin**，必须注入凭据。
+    /// 复用 clone 的 `AskpassGuard` 临时脚本机制——token 不进命令行、不落
+    /// `.git/config`，并以 `-c credential.helper=` 屏蔽全局 helper 强制走一次性凭据。
+    /// HTTPS 传 `credentials = Some(..)`；SSH 传 `None`（靠本机 key 认证）。
+    ///
+    /// `proxy_env` 与 clone 一致：注入 `HTTP_PROXY`/`HTTPS_PROXY` 让 git 经代理访问远端，
+    /// 避免「reqwest 走代理建仓成功、git 直连远端超时」的不一致（见 services::proxy::git_proxy_env）。
+    pub async fn push_set_upstream(
+        &self,
+        repo: &Path,
+        remote: &str,
+        branch: &str,
+        credentials: Option<CredentialInjection>,
+        proxy_env: &[(String, String)],
+    ) -> Result<String> {
+        let askpass_guard = match &credentials {
+            Some(cred) => Some(AskpassGuard::create(cred)?),
+            None => None,
+        };
+        // 脚本路径需在整个 run() 期间存活，提前取出为 owned String（不借用 guard）
+        let script_path = askpass_guard
+            .as_ref()
+            .map(|g| g.script_path().to_string_lossy().into_owned());
+
+        let mut extra_env: Vec<(&str, &str)> = Vec::new();
+        // 先注入代理（与 clone 一致）：reqwest 走代理时 git 也必须走，否则直连远端超时
+        for (key, value) in proxy_env {
+            extra_env.push((key.as_str(), value.as_str()));
+        }
+        if let Some(sp) = &script_path {
+            extra_env.push(("GIT_ASKPASS", sp.as_str()));
+            // 无 controlling terminal 的环境下部分 Git 走 SSH_ASKPASS 路径
+            extra_env.push(("SSH_ASKPASS", sp.as_str()));
+            extra_env.push(("DISPLAY", ":0"));
+        }
+
+        let output = self
+            .run(
+                &["-c", "credential.helper=", "push", "-u", remote, branch],
+                Some(repo),
+                &extra_env,
+            )
+            .await?;
+        // 推送结束后再释放 guard（删除 askpass 脚本）
+        drop(askpass_guard);
+
+        let stderr = redact_token(&String::from_utf8_lossy(&output.stderr));
+        if !output.status.success() {
+            let lower = stderr.to_lowercase();
+            // 仓库保护规则拦截（GitHub Push Protection 检测到密钥、受保护分支等）。
+            // 这类输出同样含 "rejected"，必须先于 non-fast-forward 判断，否则会误报"远程已有提交"
+            if lower.contains("push protection")
+                || lower.contains("repository rule violations")
+                || lower.contains("cannot contain secrets")
+                || lower.contains("secret scanning")
+                || lower.contains("protected branch")
+            {
+                return Err(GitViewError::GitCommand(format!(
+                    "推送被远程仓库的保护规则拦截（如检测到提交包含密钥）：请按平台提示放行，或先从提交中移除敏感信息后重试。{stderr}"
+                )));
+            }
+            // 真正的 non-fast-forward：远程已有本地缺失的提交
+            if lower.contains("non-fast-forward") || lower.contains("fetch first") {
+                return Err(GitViewError::GitCommand(format!(
+                    "推送被拒绝（远程已存在提交）：请确认远程为空仓库或先 Pull 后重试。{stderr}"
+                )));
+            }
+            if lower.contains("permission denied") || lower.contains("authentication failed") {
+                return Err(GitViewError::Forbidden);
+            }
+            return Err(map_network_failure("push", &stderr));
+        }
+        let stdout = redact_token(&String::from_utf8_lossy(&output.stdout));
+        Ok(format!("{stdout}{stderr}"))
+    }
+
+    // =====================================================================
     // 分支管理操作（T079 — checkout / create_branch）
     // =====================================================================
 

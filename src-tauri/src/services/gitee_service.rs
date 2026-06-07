@@ -20,7 +20,7 @@ use uuid::Uuid;
 use crate::errors::{GitViewError, Result};
 use crate::models::account::GitPlatform;
 use crate::models::git::{CommitDetail, CommitFile, CommitFileStatus, CommitStats, CommitSummary};
-use crate::models::repository::{RemoteRepository, Visibility};
+use crate::models::repository::{CreateRepoRequest, RemoteRepository, Visibility};
 use crate::services::provider::{
     parse_iso_datetime, truncate_file_diff, CommitPage, GitHostingProvider, RepositoryPage,
     UserProfile,
@@ -279,39 +279,7 @@ impl GitHostingProvider for GiteeProvider {
 
         let items: Vec<RemoteRepository> = repos
             .into_iter()
-            .map(|r| {
-                let pushed_at = r
-                    .pushed_at
-                    .as_deref()
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let visibility = if r.is_private {
-                    Visibility::Private
-                } else if r.is_internal.unwrap_or(false) {
-                    Visibility::Internal
-                } else {
-                    Visibility::Public
-                };
-                let clone_url = r.https_url.unwrap_or_else(|| r.html_url.clone() + ".git");
-                RemoteRepository {
-                    id: Uuid::new_v4().to_string(),
-                    account_id: account_id.to_string(),
-                    platform: GitPlatform::Gitee,
-                    remote_id: r.id.to_string(),
-                    full_name: r.full_name,
-                    name: r.name,
-                    owner: r.owner.login,
-                    description: r.description,
-                    visibility,
-                    default_branch: r.default_branch.unwrap_or_else(|| "master".to_string()),
-                    html_url: r.html_url,
-                    ssh_url: r.ssh_url,
-                    clone_url,
-                    is_favorite: false,
-                    last_pushed_at: pushed_at,
-                    synced_at: now,
-                }
-            })
+            .map(|r| map_gitee_repo(r, account_id, now))
             .collect();
 
         Ok(RepositoryPage { items, has_next })
@@ -431,6 +399,105 @@ impl GitHostingProvider for GiteeProvider {
         })?;
 
         Ok(map_gitee_detail(detail))
+    }
+
+    async fn create_repository(
+        &self,
+        req: &CreateRepoRequest,
+        account_id: &str,
+    ) -> Result<RemoteRepository> {
+        let url = format!("{}/user/repos", self.api_base_url.trim_end_matches('/'));
+        // Gitee v5 创建仓库用 form 参数（非 JSON）；auto_init=false 建空仓。
+        // Gitee 个人仓库无 internal，可见性二值化为 private/public。
+        let private = (req.visibility != Visibility::Public).to_string();
+        let mut params: Vec<(&str, &str)> = vec![
+            ("name", req.name.as_str()),
+            ("private", private.as_str()),
+            ("auto_init", "false"),
+        ];
+        if let Some(desc) = req.description.as_deref() {
+            params.push(("description", desc));
+        }
+
+        let req_builder = match self.auth_mode {
+            GiteeAuthMode::Header => self
+                .client
+                .post(&url)
+                .header("Authorization", format!("token {}", self.token))
+                .form(&params),
+            GiteeAuthMode::Query => {
+                // Query 模式下 token 也作为表单参数随请求体一起发送
+                params.push(("access_token", self.token.as_str()));
+                self.client.post(&url).form(&params)
+            }
+        };
+
+        let resp = req_builder
+            .send()
+            .await
+            .map_err(|e| map_request_error("Gitee", &e))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            // Gitee 重名多以 400 返回，文案中英不定，宽松匹配关键词
+            if status.as_u16() == 400 {
+                let detail = redact_token(&resp.text().await.unwrap_or_default());
+                if detail.contains("exist")
+                    || detail.contains("存在")
+                    || detail.contains("已被使用")
+                {
+                    return Err(GitViewError::RepoNameTaken);
+                }
+                return Err(GitViewError::Network(format!(
+                    "Gitee 创建仓库失败：{detail}"
+                )));
+            }
+            return Err(map_status_error("Gitee", status.as_u16()));
+        }
+
+        let repo: GiteeRepoResp = resp.json().await.map_err(|e| {
+            GitViewError::ResponseDecode(format!(
+                "解析 Gitee 创建仓库响应失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        Ok(map_gitee_repo(repo, account_id, Utc::now()))
+    }
+}
+
+/// 把 Gitee 仓库响应映射为统一的 `RemoteRepository`（list 与 create 共用）。
+fn map_gitee_repo(r: GiteeRepoResp, account_id: &str, now: DateTime<Utc>) -> RemoteRepository {
+    let pushed_at = r
+        .pushed_at
+        .as_deref()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+    let visibility = if r.is_private {
+        Visibility::Private
+    } else if r.is_internal.unwrap_or(false) {
+        Visibility::Internal
+    } else {
+        Visibility::Public
+    };
+    let clone_url = r.https_url.unwrap_or_else(|| r.html_url.clone() + ".git");
+    RemoteRepository {
+        id: Uuid::new_v4().to_string(),
+        account_id: account_id.to_string(),
+        platform: GitPlatform::Gitee,
+        remote_id: r.id.to_string(),
+        full_name: r.full_name,
+        name: r.name,
+        owner: r.owner.login,
+        description: r.description,
+        visibility,
+        default_branch: r.default_branch.unwrap_or_else(|| "master".to_string()),
+        html_url: r.html_url,
+        ssh_url: r.ssh_url,
+        clone_url,
+        is_favorite: false,
+        last_pushed_at: pushed_at,
+        synced_at: now,
     }
 }
 

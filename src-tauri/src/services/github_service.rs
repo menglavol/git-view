@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::errors::{GitViewError, Result};
 use crate::models::account::GitPlatform;
 use crate::models::git::{CommitDetail, CommitFile, CommitFileStatus, CommitStats, CommitSummary};
-use crate::models::repository::{RemoteRepository, Visibility};
+use crate::models::repository::{CreateRepoRequest, RemoteRepository, Visibility};
 use crate::services::provider::{
     parse_iso_datetime, truncate_file_diff, CommitPage, GitHostingProvider, RepositoryPage,
     UserProfile,
@@ -254,35 +254,7 @@ impl GitHostingProvider for GitHubProvider {
         let now = Utc::now();
         let items: Vec<RemoteRepository> = repos
             .into_iter()
-            .map(|r| {
-                let pushed_at = r
-                    .pushed_at
-                    .as_deref()
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                RemoteRepository {
-                    id: Uuid::new_v4().to_string(),
-                    account_id: account_id.to_string(),
-                    platform: GitPlatform::Github,
-                    remote_id: r.id.to_string(),
-                    full_name: r.full_name,
-                    name: r.name,
-                    owner: r.owner.login,
-                    description: r.description,
-                    visibility: if r.private {
-                        Visibility::Private
-                    } else {
-                        Visibility::Public
-                    },
-                    default_branch: r.default_branch,
-                    html_url: r.html_url,
-                    ssh_url: r.ssh_url,
-                    clone_url: r.clone_url,
-                    is_favorite: false,
-                    last_pushed_at: pushed_at,
-                    synced_at: now,
-                }
-            })
+            .map(|r| map_github_repo(r, account_id, now))
             .collect();
 
         Ok(RepositoryPage { items, has_next })
@@ -398,6 +370,88 @@ impl GitHostingProvider for GitHubProvider {
         })?;
 
         Ok(map_github_detail(detail))
+    }
+
+    async fn create_repository(
+        &self,
+        req: &CreateRepoRequest,
+        account_id: &str,
+    ) -> Result<RemoteRepository> {
+        let url = format!("{}/user/repos", self.api_base_url.trim_end_matches('/'));
+        // auto_init=false 建空仓：远程若带初始 commit 会让后续 push non-fast-forward 失败。
+        // GitHub 个人仓库无 internal，可见性二值化为 private/public。
+        let body = serde_json::json!({
+            "name": req.name,
+            "description": req.description,
+            "private": req.visibility != Visibility::Public,
+            "auto_init": false,
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .header(header::ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| map_request_error("GitHub", &e))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            // 422 多为校验错误，重名是最常见的一种：读 body 关键字区分，便于前端提示改名
+            if status.as_u16() == 422 {
+                let detail = redact_token(&resp.text().await.unwrap_or_default());
+                if detail.contains("already exists") {
+                    return Err(GitViewError::RepoNameTaken);
+                }
+                return Err(GitViewError::Network(format!(
+                    "GitHub 创建仓库失败：{detail}"
+                )));
+            }
+            return Err(map_status_error("GitHub", status.as_u16()));
+        }
+
+        let repo: GitHubRepoResp = resp.json().await.map_err(|e| {
+            GitViewError::ResponseDecode(format!(
+                "解析 GitHub 创建仓库响应失败：{}",
+                redact_token(&e.to_string())
+            ))
+        })?;
+
+        Ok(map_github_repo(repo, account_id, Utc::now()))
+    }
+}
+
+/// 把 GitHub 仓库响应映射为统一的 `RemoteRepository`（list 与 create 共用）。
+fn map_github_repo(r: GitHubRepoResp, account_id: &str, now: DateTime<Utc>) -> RemoteRepository {
+    let pushed_at = r
+        .pushed_at
+        .as_deref()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+    RemoteRepository {
+        id: Uuid::new_v4().to_string(),
+        account_id: account_id.to_string(),
+        platform: GitPlatform::Github,
+        remote_id: r.id.to_string(),
+        full_name: r.full_name,
+        name: r.name,
+        owner: r.owner.login,
+        description: r.description,
+        visibility: if r.private {
+            Visibility::Private
+        } else {
+            Visibility::Public
+        },
+        default_branch: r.default_branch,
+        html_url: r.html_url,
+        ssh_url: r.ssh_url,
+        clone_url: r.clone_url,
+        is_favorite: false,
+        last_pushed_at: pushed_at,
+        synced_at: now,
     }
 }
 

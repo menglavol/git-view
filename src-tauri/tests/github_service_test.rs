@@ -10,6 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use gitview_lib::errors::GitViewError;
+use gitview_lib::models::repository::{CreateRepoRequest, Visibility};
 use gitview_lib::services::github_service::GitHubProvider;
 use gitview_lib::services::provider::GitHostingProvider;
 use wiremock::matchers::{header, method, path};
@@ -20,6 +21,68 @@ const TEST_TOKEN: &str = "ghp_aaaabbbbccccddddeeeeffffgggghhhhiiii"; // allow-to
 fn make_provider(base: &str) -> GitHubProvider {
     GitHubProvider::new(Some(base.to_string()), TEST_TOKEN.to_string(), None)
         .expect("应能构造 GitHubProvider")
+}
+
+/// create_repository：201 成功，响应正确映射为 RemoteRepository
+#[tokio::test]
+async fn create_repository_success() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/user/repos"))
+        .and(header("authorization", format!("Bearer {TEST_TOKEN}")))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "id": 555,
+            "full_name": "octocat/new-repo",
+            "name": "new-repo",
+            "owner": { "login": "octocat" },
+            "description": "demo",
+            "default_branch": "main",
+            "private": true,
+            "html_url": "https://github.com/octocat/new-repo",
+            "clone_url": "https://github.com/octocat/new-repo.git",
+            "ssh_url": "git@github.com:octocat/new-repo.git",
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = make_provider(&server.uri());
+    let req = CreateRepoRequest {
+        name: "new-repo".to_string(),
+        description: Some("demo".to_string()),
+        visibility: Visibility::Private,
+    };
+    let repo = provider
+        .create_repository(&req, "acc-1")
+        .await
+        .expect("应成功");
+    assert_eq!(repo.account_id, "acc-1");
+    assert_eq!(repo.remote_id, "555");
+    assert_eq!(repo.full_name, "octocat/new-repo");
+    assert!(matches!(repo.visibility, Visibility::Private));
+    assert_eq!(repo.clone_url, "https://github.com/octocat/new-repo.git");
+}
+
+/// create_repository：422 且响应含 "already exists" → RepoNameTaken（前端提示改名）
+#[tokio::test]
+async fn create_repository_conflict_maps_to_name_taken() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/user/repos"))
+        .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+            "message": "Repository creation failed.",
+            "errors": [{ "message": "name already exists on this account" }],
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = make_provider(&server.uri());
+    let req = CreateRepoRequest {
+        name: "dup".to_string(),
+        description: None,
+        visibility: Visibility::Private,
+    };
+    let err = provider.create_repository(&req, "acc-1").await.unwrap_err();
+    assert!(matches!(err, GitViewError::RepoNameTaken));
 }
 
 #[tokio::test]

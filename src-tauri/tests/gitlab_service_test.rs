@@ -10,7 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use gitview_lib::errors::GitViewError;
-use gitview_lib::models::repository::Visibility;
+use gitview_lib::models::repository::{CreateRepoRequest, Visibility};
 use gitview_lib::services::gitlab_service::{
     derive_gitlab_api_url, GitLabClientConfig, GitLabProvider,
 };
@@ -27,6 +27,67 @@ fn client_config(api_base: &str) -> GitLabClientConfig {
         proxy_url: None,
         request_timeout_seconds: Some(5),
     }
+}
+
+/// create_repository：201 成功，project 响应映射为 RemoteRepository
+#[tokio::test]
+async fn create_repository_success() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/projects"))
+        .and(header("private-token", TEST_TOKEN))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "id": 909,
+            "path_with_namespace": "alice/new-proj",
+            "name": "new-proj",
+            "namespace": { "path": "alice" },
+            "description": "demo",
+            "default_branch": "main",
+            "visibility": "private",
+            "web_url": "https://gitlab.example.com/alice/new-proj",
+            "http_url_to_repo": "https://gitlab.example.com/alice/new-proj.git",
+            "ssh_url_to_repo": "git@gitlab.example.com:alice/new-proj.git",
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = GitLabProvider::new(client_config(&server.uri()), TEST_TOKEN.to_string())
+        .expect("应能构造");
+    let req = CreateRepoRequest {
+        name: "new-proj".to_string(),
+        description: Some("demo".to_string()),
+        visibility: Visibility::Private,
+    };
+    let repo = provider
+        .create_repository(&req, "acc-1")
+        .await
+        .expect("应成功");
+    assert_eq!(repo.remote_id, "909");
+    assert_eq!(repo.full_name, "alice/new-proj");
+    assert!(matches!(repo.visibility, Visibility::Private));
+}
+
+/// create_repository：400 且含 "has already been taken" → RepoNameTaken
+#[tokio::test]
+async fn create_repository_conflict_maps_to_name_taken() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/projects"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "message": { "name": ["has already been taken"] }
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = GitLabProvider::new(client_config(&server.uri()), TEST_TOKEN.to_string())
+        .expect("应能构造");
+    let req = CreateRepoRequest {
+        name: "dup".to_string(),
+        description: None,
+        visibility: Visibility::Private,
+    };
+    let err = provider.create_repository(&req, "acc-1").await.unwrap_err();
+    assert!(matches!(err, GitViewError::RepoNameTaken));
 }
 
 #[tokio::test]
