@@ -3,6 +3,10 @@
     <div class="page-header">
       <h2 class="page-title">远程仓库</h2>
       <div class="header-actions">
+        <ElRadioGroup v-model="viewMode">
+          <ElRadioButton value="tree">树形</ElRadioButton>
+          <ElRadioButton value="list">列表</ElRadioButton>
+        </ElRadioGroup>
         <ElButton type="primary" :disabled="selection.length === 0" @click="onBatchClone">
           批量 Clone ({{ selection.length }})
         </ElButton>
@@ -52,7 +56,19 @@
       </span>
     </div>
 
+    <RemoteRepoTree
+      v-if="viewMode === 'tree'"
+      :items="store.repositories"
+      :loading="store.loading"
+      empty-text="暂无远程仓库，请先同步账号"
+      @update:selection="selection = $event"
+      @open-detail="onOpenDetail"
+      @clone="onClone"
+      @toggle-favorite="onToggleFavorite"
+      @copy-url="onCopyFromTable"
+    />
     <RemoteRepoTable
+      v-else
       :items="store.repositories"
       :loading="store.loading"
       empty-text="暂无远程仓库，请先同步账号"
@@ -79,13 +95,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { useRouter } from 'vue-router';
 
 import BatchCloneDialog from '@/components/clone/BatchCloneDialog.vue';
 import RemoteRepoTable from '@/components/repository/RemoteRepoTable.vue';
+import RemoteRepoTree from '@/components/repository/RemoteRepoTree.vue';
 import RepoDetailDrawer from '@/components/repository/RepoDetailDrawer.vue';
 import { useRemoteRepositoryStore } from '@/stores/remoteRepository';
 import { useAccountStore } from '@/stores/account';
@@ -95,6 +112,7 @@ const store = useRemoteRepositoryStore();
 const accountStore = useAccountStore();
 const router = useRouter();
 
+const viewMode = ref<'tree' | 'list'>('tree');
 const searchText = ref('');
 const filterPlatforms = ref<string[]>([]);
 const filterAccountId = ref<string | undefined>(undefined);
@@ -106,6 +124,11 @@ const batchDialogVisible = ref(false);
 const cloneTargets = ref<RemoteRepository[]>([]);
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+// 切换视图时清空选择：树/列表勾选状态相互独立，避免残留旧选中影响批量操作
+watch(viewMode, () => {
+  selection.value = [];
+});
 
 onMounted(() => {
   void accountStore.loadAccounts().catch(() => {});
@@ -195,6 +218,13 @@ function onCopyFromTable(payload: { repo: RemoteRepository; type: 'https' | 'ssh
   margin: 0;
   font-size: 20px;
   font-weight: 600;
+}
+
+/* 头部操作区：横向排列并垂直居中，消除 radio 组与按钮的基线错位 */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .filter-bar {

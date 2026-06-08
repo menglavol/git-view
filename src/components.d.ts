@@ -65,6 +65,7 @@ declare module 'vue' {
     LocalRepoTable: typeof import('./components/repository/LocalRepoTable.vue')['default']
     PublishToRemoteDialog: typeof import('./components/repository/PublishToRemoteDialog.vue')['default']
     RemoteRepoTable: typeof import('./components/repository/RemoteRepoTable.vue')['default']
+    RemoteRepoTree: typeof import('./components/repository/RemoteRepoTree.vue')['default']
     RepoDetailDrawer: typeof import('./components/repository/RepoDetailDrawer.vue')['default']
     RepoStatusOverview: typeof import('./components/repository/RepoStatusOverview.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
