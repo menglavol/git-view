@@ -14,6 +14,8 @@ export interface CreateCloneTasksPayload {
   directoryStrategy: DirectoryStrategy;
   concurrency?: number;
   autoAddToLocal: boolean;
+  /** 每个仓库的自定义目标目录末段名（key = remoteRepositoryId），缺省回退仓库名 */
+  dirNameOverrides?: Record<string, string>;
 }
 
 /** Clone 进度事件。 */

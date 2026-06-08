@@ -40,14 +40,24 @@
       <ElDivider />
 
       <div class="preview">
-        <div class="preview-title">目标路径预览</div>
-        <ul class="preview-list">
-          <li v-for="p in previews" :key="p.id">
-            <span class="repo">{{ p.fullName }}</span>
+        <div class="preview-title">目标路径（目录名可编辑）</div>
+        <div class="preview-list">
+          <div v-for="r in selectedRepos" :key="r.id" class="preview-row">
+            <span class="repo" :title="r.fullName">{{ r.fullName }}</span>
             <span class="arrow">→</span>
-            <code class="path">{{ p.path }}</code>
-          </li>
-        </ul>
+            <code class="path-prefix">{{ prefixFor(r) }}</code>
+            <ElInput
+              v-model="dirNames[r.id]"
+              size="small"
+              class="dir-input"
+              :class="{ invalid: !isValidDirName(dirNames[r.id] ?? '') }"
+              placeholder="目录名"
+            />
+          </div>
+        </div>
+        <div v-if="!allDirNamesValid" class="preview-hint">
+          目录名不能为空，且不能包含 / 或 \ 等路径分隔符
+        </div>
       </div>
     </ElForm>
 
@@ -91,43 +101,50 @@ const directoryStrategy = ref<DirectoryStrategy>('by_platform_and_owner');
 const concurrency = ref(3);
 const autoAddToLocal = ref(true);
 const submitting = ref(false);
+// 每个仓库的自定义目录名（key = repo.id），dialog 打开时初始化为仓库名
+const dirNames = ref<Record<string, string>>({});
 
-const canSubmit = computed(
-  () => targetRoot.value.trim().length > 0 && props.selectedRepos.length > 0,
+/** 目录名合法性：非空、非 . / ..、不含路径分隔符（与后端 sanitize_dir_name 对齐）。 */
+function isValidDirName(name: string): boolean {
+  const t = name.trim();
+  return t.length > 0 && t !== '.' && t !== '..' && !t.includes('/') && !t.includes('\\');
+}
+
+// 所有目录名均合法时才允许提交
+const allDirNamesValid = computed(() =>
+  props.selectedRepos.every((r) => isValidDirName(dirNames.value[r.id] ?? '')),
 );
 
-const previews = computed(() => {
-  const root = targetRoot.value.replace(/\/+$/, '') || '<root>';
-  return props.selectedRepos.slice(0, 5).map((r) => ({
-    id: r.id,
-    fullName: r.fullName,
-    path: computePreviewPath(root, r, directoryStrategy.value),
-  }));
-});
+const canSubmit = computed(
+  () =>
+    targetRoot.value.trim().length > 0 && props.selectedRepos.length > 0 && allDirNamesValid.value,
+);
+
+/** 计算某仓库目标路径的前缀（不含末段目录名），随根目录与组织方式变化。 */
+function prefixFor(repo: RemoteRepository): string {
+  const root = targetRoot.value.replace(/[/\\]+$/, '') || '<root>';
+  switch (directoryStrategy.value) {
+    case 'flat':
+      return `${root}/`;
+    case 'by_owner':
+      return `${root}/${repo.owner}/`;
+    case 'by_platform_and_owner':
+      return `${root}/${repo.platform}/${repo.owner}/`;
+  }
+}
 
 watch(
   () => props.modelValue,
   (v) => {
     if (v) {
       submitting.value = false;
+      // 重置目录名为各仓库的默认名（仓库名）
+      const init: Record<string, string> = {};
+      for (const r of props.selectedRepos) init[r.id] = r.name;
+      dirNames.value = init;
     }
   },
 );
-
-function computePreviewPath(
-  root: string,
-  repo: RemoteRepository,
-  strategy: DirectoryStrategy,
-): string {
-  switch (strategy) {
-    case 'flat':
-      return `${root}/${repo.name}`;
-    case 'by_owner':
-      return `${root}/${repo.owner}/${repo.name}`;
-    case 'by_platform_and_owner':
-      return `${root}/${repo.platform}/${repo.owner}/${repo.name}`;
-  }
-}
 
 async function onPickDir(): Promise<void> {
   try {
@@ -150,6 +167,8 @@ async function onConfirm(): Promise<void> {
       directoryStrategy: directoryStrategy.value,
       concurrency: concurrency.value,
       autoAddToLocal: autoAddToLocal.value,
+      // 每仓库自定义目录名；后端再做一次 sanitize 防穿越
+      dirNameOverrides: { ...dirNames.value },
     });
     ElMessage.success(`已创建 ${props.selectedRepos.length} 个克隆任务`);
     visible.value = false;
@@ -182,30 +201,50 @@ async function onConfirm(): Promise<void> {
 }
 
 .preview-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
   font-size: 12px;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
-.preview-list li {
+.preview-row {
   display: flex;
   gap: 8px;
-  align-items: baseline;
-  padding: 2px 0;
+  align-items: center;
+  padding: 3px 0;
 }
 
 .repo {
   color: var(--el-color-primary);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .arrow {
   color: var(--el-text-color-secondary);
+  flex-shrink: 0;
 }
 
-.path {
+.path-prefix {
   font-family: var(--el-font-family-monospace, monospace);
-  color: var(--el-text-color-regular);
+  color: var(--el-text-color-secondary);
   word-break: break-all;
+}
+
+.dir-input {
+  width: 160px;
+  flex-shrink: 0;
+}
+
+.dir-input.invalid :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+
+.preview-hint {
+  color: var(--el-color-danger);
+  font-size: 12px;
+  margin-top: 8px;
 }
 </style>
