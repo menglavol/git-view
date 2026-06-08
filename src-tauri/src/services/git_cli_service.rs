@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::errors::{GitViewError, Result};
 use crate::models::git::FileStatus;
+use crate::utils::process::apply_no_window;
 use crate::utils::redact::redact_token;
 
 /// Git 检测结果。
@@ -132,6 +133,8 @@ impl GitCliService {
         extra_env: &[(&str, &str)],
     ) -> Result<std::process::Output> {
         let mut cmd = Command::new(&self.git_path);
+        // Windows 上隐藏控制台窗口，避免每次 git 调用闪现终端（其它平台无操作）
+        apply_no_window(&mut cmd);
         cmd.args(args)
             .env("LC_ALL", "C")
             .env("GIT_TERMINAL_PROMPT", "0");
@@ -149,11 +152,17 @@ impl GitCliService {
     /// 异步执行 git clone，并通过 progress 回调推送解析后的进度事件。
     ///
     /// `cancel_token` 触发后立即 kill 子进程并清理目标目录。
-    /// 失败或取消时**自动删除半成品 target_path**。
+    /// 失败或取消时清理半成品：`preserve_target_dir = true`（目标是用户预先建好的
+    /// 空目录）时只清空内容、保留目录本身；否则删除整个 target_path。
+    ///
+    /// 参数较多（凭据、代理、进度回调、取消令牌等正交关注点），强行打包结构体反而
+    /// 模糊语义，显式豁免 too_many_arguments。
+    #[allow(clippy::too_many_arguments)]
     pub async fn clone_repository<F>(
         &self,
         remote_url: &str,
         target_path: &Path,
+        preserve_target_dir: bool,
         credentials: Option<CredentialInjection>,
         extra_env: &[(String, String)],
         progress: F,
@@ -168,6 +177,8 @@ impl GitCliService {
         };
 
         let mut cmd = Command::new(&self.git_path);
+        // Windows 上隐藏控制台窗口，避免 clone 时闪现终端（其它平台无操作）
+        apply_no_window(&mut cmd);
         cmd.arg("clone")
             .arg("--progress")
             .arg("-c")
@@ -208,7 +219,7 @@ impl GitCliService {
             })?,
             () = cancel_token.cancelled() => {
                 let _ = child.kill().await;
-                cleanup_partial_clone(target_path);
+                cleanup_partial_clone(target_path, preserve_target_dir);
                 drop(askpass_guard);
                 return Err(GitViewError::UserCancelled);
             }
@@ -217,7 +228,7 @@ impl GitCliService {
         let _ = parser_handle.await;
 
         if !exit_status.success() {
-            cleanup_partial_clone(target_path);
+            cleanup_partial_clone(target_path, preserve_target_dir);
             let code = exit_status.code().unwrap_or(-1);
             return Err(GitViewError::GitCommand(format!("git clone 退出码 {code}")));
         }
@@ -688,8 +699,11 @@ async fn locate_git_executable() -> Result<PathBuf> {
     let candidates = candidate_paths();
 
     for path in &candidates {
+        let mut probe = Command::new(path);
+        // Windows 上隐藏控制台窗口，避免探测 git 时闪现终端（其它平台无操作）
+        apply_no_window(&mut probe);
         // .is_ok_and 比 .map(...).unwrap_or(false) 更直白
-        if Command::new(path)
+        if probe
             .arg("--version")
             .env("LC_ALL", "C")
             .output()
@@ -708,7 +722,10 @@ async fn locate_git_executable() -> Result<PathBuf> {
 /// 从 detect 提取的复用单元,供 detect / detect_with_preferred / set_git_path 共用,
 /// 避免「校验可执行 + 解析版本 + 读身份」三处逻辑重复。
 async fn probe_git(git_path: PathBuf) -> Result<GitVersionInfo> {
-    let version_output = Command::new(&git_path)
+    let mut version_cmd = Command::new(&git_path);
+    // Windows 上隐藏控制台窗口，避免读取 git 版本时闪现终端（其它平台无操作）
+    apply_no_window(&mut version_cmd);
+    let version_output = version_cmd
         .arg("--version")
         .env("LC_ALL", "C")
         .output()
@@ -769,7 +786,10 @@ fn candidate_paths() -> Vec<PathBuf> {
 }
 
 async fn read_git_config(git_path: &Path, key: &str) -> Result<String> {
-    let output = Command::new(git_path)
+    let mut cmd = Command::new(git_path);
+    // Windows 上隐藏控制台窗口，避免读取 git 配置时闪现终端（其它平台无操作）
+    apply_no_window(&mut cmd);
+    let output = cmd
         .args(["config", "--global", "--get", key])
         .env("LC_ALL", "C")
         .output()
@@ -875,8 +895,27 @@ where
     })
 }
 
-fn cleanup_partial_clone(target_path: &Path) {
-    if target_path.exists() {
+/// 清理 clone 失败/取消后的残留目录。
+///
+/// `preserve_dir = true`（目标目录是用户预先建好的空目录）时，只删除目录内
+/// clone 产生的内容、**保留目录本身**；否则（目录由本次 clone 创建）整体删除。
+fn cleanup_partial_clone(target_path: &Path, preserve_dir: bool) {
+    if !target_path.exists() {
+        return;
+    }
+    if preserve_dir {
+        // 只清空目录内容，保留用户预建的目录本身
+        if let Ok(entries) = std::fs::read_dir(target_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let _ = std::fs::remove_dir_all(&path);
+                } else {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    } else {
         let _ = std::fs::remove_dir_all(target_path);
     }
 }
@@ -1218,5 +1257,40 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, GitViewError::GitNotFound));
+    }
+
+    // -------------------------------------------------------------------
+    // 失败清理：保留用户预建目录 vs 整删
+    // -------------------------------------------------------------------
+
+    /// preserve=true：只清空目录内容、保留用户预先建好的目录本身。
+    #[test]
+    fn cleanup_preserve_keeps_dir_removes_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("repo");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("file.txt"), "x").unwrap();
+        std::fs::create_dir(target.join("sub")).unwrap();
+
+        cleanup_partial_clone(&target, true);
+
+        assert!(target.exists(), "预建目录本身应保留");
+        assert!(
+            std::fs::read_dir(&target).unwrap().next().is_none(),
+            "目录内容应被清空"
+        );
+    }
+
+    /// preserve=false：clone 自建的目录整体删除。
+    #[test]
+    fn cleanup_without_preserve_removes_whole_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("repo");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("file.txt"), "x").unwrap();
+
+        cleanup_partial_clone(&target, false);
+
+        assert!(!target.exists(), "整个目标目录应被删除");
     }
 }

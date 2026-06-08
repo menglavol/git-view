@@ -17,6 +17,23 @@ use crate::errors::{GitViewError, Result};
 /// 默认命令执行超时时间（秒）
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 
+/// 在 Windows 上为子进程设置 `CREATE_NO_WINDOW` 创建标志，避免 spawn git 等
+/// 控制台程序时闪现黑色终端窗口；非 Windows 平台无此问题，为空操作。
+///
+/// 统一封装于此，供本模块 `run_command*` 与 `git_cli_service` 的各 git 调用复用，
+/// 免去在每个 `Command::new` 处重复 `#[cfg(windows)]` 分支。
+#[cfg(windows)]
+pub(crate) fn apply_no_window(command: &mut Command) {
+    // CREATE_NO_WINDOW = 0x0800_0000：子进程不分配控制台窗口
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+/// 非 Windows 平台的空实现：保持调用点跨平台统一，无需 const（与 windows 版同签名）。
+#[cfg(not(windows))]
+#[allow(clippy::missing_const_for_fn)]
+pub(crate) fn apply_no_window(_command: &mut Command) {}
+
 /// 异步执行外部命令。
 ///
 /// 自动注入 `LC_ALL=C` 与 `GIT_TERMINAL_PROMPT=0` 环境变量，
@@ -61,6 +78,8 @@ pub async fn run_command_with_timeout(
     timeout_secs: u64,
 ) -> Result<Output> {
     let mut command = Command::new(cmd);
+    // Windows 上隐藏控制台窗口，避免 spawn git 时闪现终端（其它平台无操作）
+    apply_no_window(&mut command);
 
     // 添加命令参数
     command.args(args);

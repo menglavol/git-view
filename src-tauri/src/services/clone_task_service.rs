@@ -42,22 +42,26 @@ use crate::utils::redact::redact_token;
 
 /// 根据策略计算单个仓库的目标本地路径。
 ///
-/// - `Flat`：`<root>/<name>`
-/// - `ByOwner`：`<root>/<owner>/<name>`
-/// - `ByPlatformAndOwner`：`<root>/<platform>/<owner>/<name>`
+/// 末段目录名取 `name_override`（已 sanitize 的自定义名），缺省回退 `repo.name`：
+/// - `Flat`：`<root>/<leaf>`
+/// - `ByOwner`：`<root>/<owner>/<leaf>`
+/// - `ByPlatformAndOwner`：`<root>/<platform>/<owner>/<leaf>`
 #[must_use]
 pub fn compute_target_path(
     root: &Path,
     repo: &RemoteRepository,
     strategy: DirectoryStrategy,
+    name_override: Option<&str>,
 ) -> PathBuf {
+    // 末段目录名：优先用经校验的自定义名，否则回退仓库名
+    let leaf = name_override.unwrap_or(repo.name.as_str());
     match strategy {
-        DirectoryStrategy::Flat => root.join(&repo.name),
-        DirectoryStrategy::ByOwner => root.join(&repo.owner).join(&repo.name),
+        DirectoryStrategy::Flat => root.join(leaf),
+        DirectoryStrategy::ByOwner => root.join(&repo.owner).join(leaf),
         DirectoryStrategy::ByPlatformAndOwner => root
             .join(platform_dir(repo.platform))
             .join(&repo.owner)
-            .join(&repo.name),
+            .join(leaf),
     }
 }
 
@@ -67,6 +71,31 @@ const fn platform_dir(p: GitPlatform) -> &'static str {
         GitPlatform::Gitlab => "gitlab",
         GitPlatform::Gitee => "gitee",
     }
+}
+
+/// 判断路径是否为空目录（是目录且不含任何条目）。
+///
+/// 用于 clone 前置检查：目标目录已存在但为空时仍允许 clone（git 本身支持），
+/// 仅当目录非空或为文件时才拒绝。read_dir 失败（无权限等）保守视为非空。
+fn is_empty_dir(path: &Path) -> bool {
+    path.is_dir() && std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
+}
+
+/// 校验并归一化用户自定义的目标目录末段名，防止路径穿越（宪法 Principle III）。
+///
+/// 返回 `Some(name)` 表示合法可用（已 trim）；非法（空白、`.`/`..`、含 `/` 或 `\`）
+/// 返回 `None`，调用方据此回退仓库名。仅作用于「末段单级目录名」，任何分隔符均非法。
+fn sanitize_dir_name(name: &str) -> Option<&str> {
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+    {
+        return None;
+    }
+    Some(trimmed)
 }
 
 // =====================================================================
@@ -121,6 +150,10 @@ pub struct CreateCloneTasksPayload {
     pub directory_strategy: DirectoryStrategy,
     pub concurrency: Option<u8>,
     pub auto_add_to_local: bool,
+    /// 每个仓库的自定义目标目录末段名（key = remoteRepositoryId）。
+    /// 缺省（未传 / 无对应项）或非法名（经 sanitize）时回退仓库名。
+    #[serde(default)]
+    pub dir_name_overrides: HashMap<String, String>,
 }
 
 /// 批量创建 clone 任务（status = pending）。
@@ -147,7 +180,18 @@ pub fn create_clone_tasks(
                     }
                 };
 
-            let target = compute_target_path(&target_root, &repo, payload.directory_strategy);
+            // 取该仓库的自定义目录名（经 sanitize 防穿越），非法 / 缺省回退仓库名
+            let name_override = payload
+                .dir_name_overrides
+                .get(&repo.id)
+                .map(String::as_str)
+                .and_then(sanitize_dir_name);
+            let target = compute_target_path(
+                &target_root,
+                &repo,
+                payload.directory_strategy,
+                name_override,
+            );
             let task_id = Uuid::new_v4().to_string();
 
             let insert = conn.execute(
@@ -265,8 +309,11 @@ async fn run_one_task<R: tauri::Runtime>(
 
     let target_path = PathBuf::from(&task.target_path);
 
-    if target_path.exists() {
-        let msg = format!("目标目录已存在：{}", target_path.display());
+    // 目标目录已存在且非空时拒绝；空目录放行（git clone 到空目录本就合法）。
+    // pre_existed 记录目录原本是否存在：失败/取消清理时据此保留用户预建的空目录。
+    let pre_existed = target_path.exists();
+    if pre_existed && !is_empty_dir(&target_path) {
+        let msg = format!("目标目录已存在且非空：{}", target_path.display());
         let _ = update_status(&pool, &task_id, CloneTaskStatus::Failed, None, Some(&msg));
         emit_status(&app, &task_id, CloneTaskStatus::Failed, 0, Some(&msg));
         cleanup_handle(&manager, &task_id);
@@ -317,6 +364,7 @@ async fn run_one_task<R: tauri::Runtime>(
         .clone_repository(
             &task.remote_url,
             &target_path,
+            pre_existed,
             credentials,
             &proxy_env,
             progress_cb,
@@ -791,14 +839,14 @@ mod tests {
     #[test]
     fn target_path_flat() {
         let repo = make_repo("web-app", "alice", GitPlatform::Github);
-        let p = compute_target_path(Path::new("/proj"), &repo, DirectoryStrategy::Flat);
+        let p = compute_target_path(Path::new("/proj"), &repo, DirectoryStrategy::Flat, None);
         assert_eq!(p, PathBuf::from("/proj/web-app"));
     }
 
     #[test]
     fn target_path_by_owner() {
         let repo = make_repo("web-app", "alice", GitPlatform::Github);
-        let p = compute_target_path(Path::new("/proj"), &repo, DirectoryStrategy::ByOwner);
+        let p = compute_target_path(Path::new("/proj"), &repo, DirectoryStrategy::ByOwner, None);
         assert_eq!(p, PathBuf::from("/proj/alice/web-app"));
     }
 
@@ -809,6 +857,7 @@ mod tests {
             Path::new("/proj"),
             &repo,
             DirectoryStrategy::ByPlatformAndOwner,
+            None,
         );
         assert_eq!(p, PathBuf::from("/proj/gitlab/alice/web-app"));
     }
@@ -820,6 +869,7 @@ mod tests {
             Path::new("/路径"),
             &repo,
             DirectoryStrategy::ByPlatformAndOwner,
+            None,
         );
         assert_eq!(p, PathBuf::from("/路径/github/用户/中文项目"));
     }
@@ -828,8 +878,8 @@ mod tests {
     fn same_name_different_owners_dont_collide() {
         let r1 = make_repo("tools", "alice", GitPlatform::Github);
         let r2 = make_repo("tools", "bob", GitPlatform::Github);
-        let p1 = compute_target_path(Path::new("/p"), &r1, DirectoryStrategy::ByOwner);
-        let p2 = compute_target_path(Path::new("/p"), &r2, DirectoryStrategy::ByOwner);
+        let p1 = compute_target_path(Path::new("/p"), &r1, DirectoryStrategy::ByOwner, None);
+        let p2 = compute_target_path(Path::new("/p"), &r2, DirectoryStrategy::ByOwner, None);
         assert_ne!(p1, p2);
     }
 
@@ -845,5 +895,42 @@ mod tests {
         let git = GitCliService::with_path(PathBuf::from("git"));
         let m = CloneManager::new(git, 0);
         assert_eq!(m.semaphore.available_permits(), 1);
+    }
+
+    #[test]
+    fn target_path_uses_name_override() {
+        let repo = make_repo("web-app", "alice", GitPlatform::Github);
+        let p = compute_target_path(
+            Path::new("/proj"),
+            &repo,
+            DirectoryStrategy::ByOwner,
+            Some("my-custom-dir"),
+        );
+        assert_eq!(p, PathBuf::from("/proj/alice/my-custom-dir"));
+    }
+
+    #[test]
+    fn sanitize_rejects_traversal_and_separators() {
+        assert_eq!(sanitize_dir_name("normal"), Some("normal"));
+        assert_eq!(sanitize_dir_name("  spaced  "), Some("spaced"));
+        assert_eq!(sanitize_dir_name(""), None);
+        assert_eq!(sanitize_dir_name("   "), None);
+        assert_eq!(sanitize_dir_name("."), None);
+        assert_eq!(sanitize_dir_name(".."), None);
+        assert_eq!(sanitize_dir_name("a/b"), None);
+        assert_eq!(sanitize_dir_name("a\\b"), None);
+    }
+
+    #[test]
+    fn is_empty_dir_detects_empty_and_nonempty() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 空目录视为可用
+        assert!(is_empty_dir(tmp.path()));
+        // 放入文件后非空
+        std::fs::write(tmp.path().join("a.txt"), "x").unwrap();
+        assert!(!is_empty_dir(tmp.path()));
+        // 文件本身与不存在的路径都不是空目录
+        assert!(!is_empty_dir(&tmp.path().join("a.txt")));
+        assert!(!is_empty_dir(&tmp.path().join("nope")));
     }
 }
