@@ -94,6 +94,30 @@
       </template>
     </ElTableColumn>
 
+    <!-- 协议列：仅仓库行，从 remoteUrl 派生 SSH/HTTPS，并提供「切换」入口 -->
+    <ElTableColumn label="协议" width="150" align="center">
+      <template #default="{ row }">
+        <template v-if="row.type === 'repo' && protocolOf(row.repo)">
+          <ElTag size="small" :type="protocolOf(row.repo) === 'ssh' ? 'success' : 'info'">
+            {{ protocolOf(row.repo) === 'ssh' ? 'SSH' : 'HTTPS' }}
+          </ElTag>
+          <ElButton
+            link
+            size="small"
+            @click="
+              emit('switch-protocol', {
+                repo: row.repo,
+                target: protocolOf(row.repo) === 'ssh' ? 'https' : 'ssh',
+              })
+            "
+          >
+            切换
+          </ElButton>
+        </template>
+        <span v-else class="muted">—</span>
+      </template>
+    </ElTableColumn>
+
     <!-- 最近检查列：目录留空，仓库展示时间 -->
     <ElTableColumn label="最近检查" width="160">
       <template #default="{ row }">
@@ -163,6 +187,8 @@ const emit = defineEmits<{
   (e: 'open-terminal', repo: LocalRepository): void;
   /** 从列表移除：父页面须做二次确认 */
   (e: 'remove', repo: LocalRepository): void;
+  /** 切换该仓库 origin 协议：target 为目标协议（https/ssh） */
+  (e: 'switch-protocol', payload: { repo: LocalRepository; target: 'https' | 'ssh' }): void;
   /** 展开的目录 id 变化：父页面同步到 store，以便返回时恢复 */
   (e: 'update:expandedKeys', keys: string[]): void;
 }>();
@@ -319,6 +345,18 @@ function formatTime(iso?: string): string {
     // 解析失败的兜底：直接展示原始字符串
     return iso;
   }
+}
+
+/** 从本地仓库的 remoteUrl 派生当前协议；无远程或无法识别返回 null。 */
+function protocolOf(repo: LocalRepository): 'https' | 'ssh' | null {
+  // 空 remoteUrl（未关联远程）视为无协议，列内显示占位符
+  const u = repo.remoteUrl?.trim();
+  if (!u) return null;
+  // http/https → HTTPS 类；git@ 与 ssh:// → SSH 类
+  if (u.startsWith('https://') || u.startsWith('http://')) return 'https';
+  if (u.startsWith('git@') || u.startsWith('ssh://')) return 'ssh';
+  // 其余（本地路径等）无法判定协议
+  return null;
 }
 </script>
 

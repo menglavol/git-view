@@ -92,4 +92,9 @@ export const localRepositoryApi = {
       protocol: payload.protocol,
     });
   },
+
+  /** 切换本地仓库 origin 的协议（https ↔ ssh），返回刷新后的仓库。 */
+  setProtocol(id: string, protocol: 'https' | 'ssh'): Promise<LocalRepository> {
+    return invokeCmd<LocalRepository>('set_local_repository_protocol', { id, protocol });
+  },
 };

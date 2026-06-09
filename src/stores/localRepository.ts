@@ -116,6 +116,13 @@ export const useLocalRepositoryStore = defineStore('localRepository', () => {
     }
   }
 
+  /** 切换单仓库 origin 协议（https ↔ ssh），原地替换列表中对应项。 */
+  async function setProtocol(id: string, protocol: 'https' | 'ssh'): Promise<void> {
+    const updated = await localRepositoryApi.setProtocol(id, protocol);
+    const idx = repositories.value.findIndex((r) => r.id === id);
+    if (idx >= 0) repositories.value[idx] = updated;
+  }
+
   /** 刷新全部仓库状态（后端顺序执行，避免大量 git 子进程）。 */
   async function refreshAll(): Promise<void> {
     refreshing.value = true;
@@ -170,6 +177,7 @@ export const useLocalRepositoryStore = defineStore('localRepository', () => {
     scanRoot,
     removeById,
     refreshOne,
+    setProtocol,
     refreshAll,
     batchFetch,
     openFolder,

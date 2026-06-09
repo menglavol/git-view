@@ -209,6 +209,7 @@ pub fn run() {
             commands::local_repositories::open_repository_folder,
             commands::local_repositories::open_repository_in_terminal,
             commands::local_repositories::publish_local_repository,
+            commands::local_repositories::set_local_repository_protocol,
             // US5 单仓库 Git 工作流（15 个）
             commands::git::git_status,
             commands::git::git_diff,

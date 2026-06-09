@@ -458,6 +458,17 @@ impl GitCliService {
         ensure_success(&output, "git remote add")
     }
 
+    /// 修改已有远程的 URL（`git remote set-url <name> <url>`）。
+    ///
+    /// 用于本地仓库协议切换（HTTPS↔SSH）：只改写 `.git/config` 的 remote url，
+    /// 不触碰工作区，因此无需干净工作区即可执行。
+    pub async fn set_remote_url(&self, repo: &Path, name: &str, url: &str) -> Result<()> {
+        let output = self
+            .run(&["remote", "set-url", name, url], Some(repo), &[])
+            .await?;
+        ensure_success(&output, "git remote set-url")
+    }
+
     /// 推送当前分支到全新远程并设置 upstream（`git push -u <remote> <branch>`）。
     ///
     /// 与 [`Self::push`] 的关键区别：本方法面向**刚创建的 origin**，必须注入凭据。

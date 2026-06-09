@@ -456,3 +456,86 @@ fn log_publish(
         duration_ms,
     );
 }
+
+// =====================================================================
+// 协议切换（HTTPS ↔ SSH）
+// =====================================================================
+
+/// 切换本地仓库 origin 的远程协议（HTTPS ↔ SSH）。
+///
+/// 只改写 `.git/config` 的 origin URL，不触碰工作区，因此无需干净工作区。
+/// 目标 URL 优先取该仓库关联的平台远程地址（最可靠），无关联时按当前 origin
+/// URL 做协议转换；切换后刷新仓库状态使库中 remote_url 跟随 git 实际值。
+#[tauri::command]
+pub async fn set_local_repository_protocol(
+    state: State<'_, AppState>,
+    id: String,
+    protocol: String,
+) -> Result<LocalRepository> {
+    // 仅接受 https / ssh 两种协议字符串，其余一律拒绝
+    let target = protocol.to_lowercase();
+    if target != "https" && target != "ssh" {
+        return Err(GitViewError::Internal(format!("不支持的协议：{protocol}")));
+    }
+
+    // 加载本地仓库记录，并校验其磁盘目录仍存在（被外部删除则报错）
+    let local = repository_service::load_local_repository(&state.db, &id)?;
+    let path = PathBuf::from(&local.local_path);
+    if !path.exists() {
+        return Err(GitViewError::PathMissing(local.local_path));
+    }
+    // 当前 origin URL：无 origin（None / 空）时无法切换协议
+    let current = local
+        .remote_url
+        .clone()
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| {
+            GitViewError::Internal("该仓库没有 origin 远程地址，无法切换协议".to_string())
+        })?;
+
+    let new_url = resolve_switch_target_url(&state.db, &local, &current, &target)?;
+
+    // 已是目标协议则跳过 set-url（幂等），否则改写 origin
+    if new_url != current {
+        let cli = GitCliService::with_path(PathBuf::from("git"));
+        cli.set_remote_url(&path, "origin", &new_url).await?;
+    }
+
+    // 刷新使库中 remote_url / status 跟随 git 实际状态
+    repository_service::refresh_local_repository_status(&state.db, &id).await
+}
+
+/// 计算切换目标协议后的 origin URL。
+///
+/// 优先用该本地仓库关联的平台远程仓库地址（ssh_url / clone_url），最可靠；
+/// 无关联或平台缺失对应地址时，回退按当前 URL 做 HTTPS↔SSH 正则转换。
+fn resolve_switch_target_url(
+    db: &DbPool,
+    local: &LocalRepository,
+    current: &str,
+    target: &str,
+) -> Result<String> {
+    // 优先方案：仓库已关联平台远程，直接取平台返回的现成地址（最可靠）
+    if let Some(remote_id) = &local.remote_repository_id {
+        if let Ok(remote) = repository_service::get_remote_repository(db, remote_id) {
+            if target == "ssh" {
+                // SSH 地址可能缺失（部分平台不返回），缺失则落到下方回退转换
+                if let Some(ssh) = remote.ssh_url {
+                    return Ok(ssh);
+                }
+            } else {
+                // HTTPS clone 地址平台必返回
+                return Ok(remote.clone_url);
+            }
+        }
+    }
+    // 回退方案：无平台关联（纯本地扫描）或 SSH 地址缺失时，按当前 URL 正则转换
+    let converted = if target == "ssh" {
+        crate::utils::git_url::to_ssh(current)
+    } else {
+        crate::utils::git_url::to_https(current)
+    };
+    converted.ok_or_else(|| {
+        GitViewError::Internal(format!("无法将当前地址转换为 {target} 协议：{current}"))
+    })
+}

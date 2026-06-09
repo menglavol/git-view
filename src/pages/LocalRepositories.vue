@@ -55,6 +55,7 @@
       @open-folder="onOpenFolder"
       @open-terminal="onOpenTerminal"
       @remove="onRemove"
+      @switch-protocol="onSwitchProtocol"
     />
 
     <!-- 状态总览：单选时显示，验证 RepoStatusOverview 组件可用 -->
@@ -238,6 +239,25 @@ async function onRemove(repo: LocalRepository): Promise<void> {
     ElMessage.success('已移除');
   } catch (e) {
     ElMessage.error(`移除失败：${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/**
+ * 切换单仓库 origin 协议（https ↔ ssh）。
+ * 只改写 .git/config 的 origin URL，不动工作区，因此随时可切。
+ */
+async function onSwitchProtocol(payload: {
+  repo: LocalRepository;
+  target: 'https' | 'ssh';
+}): Promise<void> {
+  try {
+    // store 内部调后端 set-url 并原地刷新该行；目标协议由表格按当前协议取反算得
+    await store.setProtocol(payload.repo.id, payload.target);
+    // 切换成功后提示：新协议的认证（SSH key / token）需用户自行确保已就绪
+    ElMessage.success(`已切换为 ${payload.target.toUpperCase()}，请确保该协议的认证已配置`);
+  } catch (e) {
+    // 常见失败：set-url 出错、地址无法转换、目录缺失
+    ElMessage.error(`切换协议失败：${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
