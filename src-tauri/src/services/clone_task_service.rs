@@ -194,6 +194,24 @@ pub fn create_clone_tasks(
             );
             let task_id = Uuid::new_v4().to_string();
 
+            // 读该仓库所属账户的默认 clone 协议，决定用 SSH 还是 HTTPS 地址。
+            // 在已持有的 conn 上直接查（避免嵌套 pool 取连接导致死锁）；读失败回退 https。
+            let clone_protocol: String = conn
+                .query_row(
+                    "SELECT default_clone_protocol FROM accounts WHERE id = ?1",
+                    params![repo.account_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| "https".to_string());
+            // SSH 优先用平台返回的 ssh_url；缺失时回退 HTTPS clone_url（不阻断 clone）
+            let remote_url = if clone_protocol == "ssh" {
+                repo.ssh_url
+                    .clone()
+                    .unwrap_or_else(|| repo.clone_url.clone())
+            } else {
+                repo.clone_url.clone()
+            };
+
             let insert = conn.execute(
                 "INSERT INTO clone_tasks (
                     id, remote_repository_id, repository_name, remote_url,
@@ -204,7 +222,7 @@ pub fn create_clone_tasks(
                     task_id,
                     repo.id,
                     repo.full_name,
-                    repo.clone_url,
+                    remote_url,
                     target.to_string_lossy(),
                     now_iso,
                 ],
@@ -219,7 +237,7 @@ pub fn create_clone_tasks(
                 id: task_id,
                 remote_repository_id: repo.id,
                 repository_name: repo.full_name,
-                remote_url: repo.clone_url,
+                remote_url,
                 target_path: target.to_string_lossy().to_string(),
                 status: CloneTaskStatus::Pending,
                 progress: 0,
