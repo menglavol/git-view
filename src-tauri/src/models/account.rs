@@ -54,6 +54,8 @@ pub struct Account {
     pub is_default: bool,
     /// 是否启用（FR-009：禁用后该账号不参与同步与列表展示）
     pub enabled: bool,
+    /// 默认 Clone 协议（https / ssh）——账户级，决定批量 clone 走 SSH 还是 HTTPS
+    pub default_clone_protocol: CloneProtocolPref,
     /// 用户备注（可空），供 UI 自定义展示
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remark: Option<String>,
@@ -192,6 +194,10 @@ pub struct AddAccountPayload {
     /// 备注（可空）
     #[serde(default)]
     pub remark: Option<String>,
+    /// 默认 Clone 协议（账户级，所有平台通用）。前端表单新建默认 SSH；
+    /// 缺省（旧前端不传）时回退枚举默认值 Https。
+    #[serde(default)]
+    pub default_clone_protocol: CloneProtocolPref,
     /// 自建 GitLab 实例配置（仅 GitLab 平台需要）
     #[serde(default)]
     pub instance_config: Option<AddGitLabInstanceConfigPayload>,
@@ -223,6 +229,9 @@ pub struct AccountUpdate {
     /// 启用/禁用切换（FR-009）
     #[serde(default)]
     pub enabled: Option<bool>,
+    /// 默认 Clone 协议（None 表示不修改）
+    #[serde(default)]
+    pub default_clone_protocol: Option<CloneProtocolPref>,
 }
 
 // =====================================================================
@@ -258,6 +267,7 @@ mod tests {
             token_key: "gitview:id-1".to_string(),
             is_default: true,
             enabled: true,
+            default_clone_protocol: CloneProtocolPref::Https,
             remark: None,
             created_at: now,
             updated_at: now,

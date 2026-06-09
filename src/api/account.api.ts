@@ -28,6 +28,8 @@ export interface AddAccountPayload {
   /** 用户提供的 Token 明文（保存到 keyring 后即可释放） */
   token: string;
   remark?: string;
+  /** 账户级默认 Clone 协议（所有平台通用，新建默认 ssh） */
+  defaultCloneProtocol?: 'https' | 'ssh';
   instanceConfig?: AddGitLabInstanceConfigPayload;
 }
 
@@ -48,6 +50,8 @@ export interface AccountUpdate {
   remark?: string;
   /** FR-009：启用/禁用切换 */
   enabled?: boolean;
+  /** 账户级默认 Clone 协议（None/缺省表示不修改） */
+  defaultCloneProtocol?: 'https' | 'ssh';
 }
 
 /**

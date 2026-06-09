@@ -148,6 +148,8 @@ pub async fn add_account(pool: &DbPool, payload: AddAccountPayload) -> Result<Ac
     let web_base_url = payload.web_base_url;
     let api_base_url_for_db = api_base_url;
     let remark = payload.remark;
+    // 账户级默认 clone 协议（顶层字段，所有平台通用）序列化为存储字符串
+    let clone_protocol_str = serialize_clone_protocol(payload.default_clone_protocol);
     let display_name = profile.display_name;
     let avatar_url = profile.avatar_url;
     let username = profile.username;
@@ -162,9 +164,9 @@ pub async fn add_account(pool: &DbPool, payload: AddAccountPayload) -> Result<Ac
             "INSERT INTO accounts (
                 id, platform, web_base_url, api_base_url, username,
                 display_name, avatar_url, token_key,
-                is_default, enabled, remark,
+                is_default, enabled, remark, default_clone_protocol,
                 created_at, updated_at, last_sync_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL)",
             params![
                 acc_id,
                 platform_str,
@@ -177,6 +179,7 @@ pub async fn add_account(pool: &DbPool, payload: AddAccountPayload) -> Result<Ac
                 i64::from(should_be_default),
                 1_i64, // enabled = true
                 remark,
+                clone_protocol_str,
                 now_iso_for_db,
                 now_iso_for_db,
             ],
@@ -329,7 +332,7 @@ pub fn list_accounts(pool: &DbPool) -> Result<Vec<Account>> {
         let mut stmt = conn.prepare(
             "SELECT id, platform, web_base_url, api_base_url, username,
                     display_name, avatar_url, token_key,
-                    is_default, enabled, remark,
+                    is_default, enabled, remark, default_clone_protocol,
                     created_at, updated_at, last_sync_at
              FROM accounts
              ORDER BY is_default DESC, created_at ASC",
@@ -349,7 +352,7 @@ pub fn load_account_by_id(pool: &DbPool, id: &str) -> Result<Account> {
         conn.query_row(
             "SELECT id, platform, web_base_url, api_base_url, username,
                     display_name, avatar_url, token_key,
-                    is_default, enabled, remark,
+                    is_default, enabled, remark, default_clone_protocol,
                     created_at, updated_at, last_sync_at
              FROM accounts WHERE id = ?1",
             params![id],
@@ -402,7 +405,7 @@ pub fn update_account(pool: &DbPool, id: &str, fields: AccountUpdate) -> Result<
             .query_row(
                 "SELECT id, platform, web_base_url, api_base_url, username,
                         display_name, avatar_url, token_key,
-                        is_default, enabled, remark,
+                        is_default, enabled, remark, default_clone_protocol,
                         created_at, updated_at, last_sync_at
                  FROM accounts WHERE id = ?1",
                 params![id_owned],
@@ -414,18 +417,23 @@ pub fn update_account(pool: &DbPool, id: &str, fields: AccountUpdate) -> Result<
         let new_avatar = fields.avatar_url.or(current.avatar_url);
         let new_remark = fields.remark.or(current.remark);
         let new_enabled = fields.enabled.unwrap_or(current.enabled);
+        // 协议为 None 表示不修改，沿用当前值
+        let new_proto = fields
+            .default_clone_protocol
+            .unwrap_or(current.default_clone_protocol);
 
         conn.execute_batch("BEGIN;")?;
         let upd_result = conn.execute(
             "UPDATE accounts
              SET display_name = ?1, avatar_url = ?2, remark = ?3, enabled = ?4,
-                 updated_at = ?5
-             WHERE id = ?6",
+                 default_clone_protocol = ?5, updated_at = ?6
+             WHERE id = ?7",
             params![
                 new_display,
                 new_avatar,
                 new_remark,
                 i64::from(new_enabled),
+                serialize_clone_protocol(new_proto),
                 now_iso,
                 id_owned,
             ],
@@ -913,6 +921,9 @@ fn row_to_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         token_key: row.get("token_key")?,
         is_default: row.get::<_, i64>("is_default")? != 0,
         enabled: row.get::<_, i64>("enabled")? != 0,
+        default_clone_protocol: deserialize_clone_protocol(
+            &row.get::<_, String>("default_clone_protocol")?,
+        ),
         remark: row.get("remark")?,
         created_at: parse_dt(&created_at_str)?,
         updated_at: parse_dt(&updated_at_str)?,

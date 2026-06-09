@@ -23,6 +23,8 @@ export interface Account {
   isDefault: boolean;
   /** FR-009：账号启用状态；禁用后不参与同步与列表展示 */
   enabled: boolean;
+  /** 账户级默认 Clone 协议：决定批量 clone 走 SSH 还是 HTTPS */
+  defaultCloneProtocol: CloneProtocolPref;
   /** 用户备注，可空 */
   remark?: string;
   /** ISO 8601 字符串 */

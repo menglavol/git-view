@@ -41,6 +41,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "003_extend_operation_logs",
         sql: include_str!("migrations/003_extend_operation_logs.sql"),
     },
+    Migration {
+        version: 4,
+        name: "004_add_account_clone_protocol",
+        sql: include_str!("migrations/004_add_account_clone_protocol.sql"),
+    },
 ];
 
 /// 在指定连接池上运行所有未应用的迁移。
@@ -238,6 +243,32 @@ mod tests {
             assert!(
                 cols.contains(&"output".to_string()),
                 "operation_logs 应含 output 列"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    /// migration 004 后 accounts 应包含 default_clone_protocol 列
+    #[test]
+    fn accounts_has_clone_protocol_column() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let pool = DbPool::new(tmp.path()).unwrap();
+        run_pending_migrations(&pool).unwrap();
+
+        pool.with_conn(|conn| {
+            // PRAGMA table_info 第 2 列（索引 1）为列名
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(accounts)")
+                .map_err(|e| GitViewError::Database(e.to_string()))?;
+            let cols: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| GitViewError::Database(e.to_string()))?
+                .filter_map(std::result::Result::ok)
+                .collect();
+            assert!(
+                cols.contains(&"default_clone_protocol".to_string()),
+                "accounts 应含 default_clone_protocol 列"
             );
             Ok(())
         })

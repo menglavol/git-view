@@ -68,6 +68,15 @@
         />
       </ElFormItem>
 
+      <!-- 通用：默认 Clone 协议（所有平台；决定批量 clone 走 SSH 还是 HTTPS） -->
+      <ElFormItem label="默认 Clone 协议">
+        <ElRadioGroup v-model="form.defaultCloneProtocol">
+          <ElRadio value="ssh">SSH</ElRadio>
+          <ElRadio value="https">HTTPS</ElRadio>
+        </ElRadioGroup>
+        <span class="hint">SSH 需预先在平台配置公钥；HTTPS 使用账户 Token。</span>
+      </ElFormItem>
+
       <!-- 私有 GitLab 高级 -->
       <template v-if="form.platformChoice === 'gitlab_self'">
         <ElDivider content-position="left">高级（仅自建 GitLab）</ElDivider>
@@ -92,13 +101,6 @@
 
         <ElFormItem label="请求超时(秒)">
           <ElInputNumber v-model="form.requestTimeoutSeconds" :min="5" :max="300" :step="5" />
-        </ElFormItem>
-
-        <ElFormItem label="默认 Clone 协议">
-          <ElRadioGroup v-model="form.defaultCloneProtocol">
-            <ElRadio value="https">HTTPS</ElRadio>
-            <ElRadio value="ssh">SSH</ElRadio>
-          </ElRadioGroup>
         </ElFormItem>
 
         <ElFormItem label="SSH 主机别名">
@@ -211,7 +213,7 @@ function makeInitialForm(): FormState {
     useSystemProxy: true,
     proxyUrl: '',
     requestTimeoutSeconds: 30,
-    defaultCloneProtocol: 'https',
+    defaultCloneProtocol: 'ssh',
     sshHostAlias: '',
     apiPathPrefix: '',
   };
@@ -356,7 +358,6 @@ function buildPayload(): AddAccountPayload {
           useSystemProxy: form.useSystemProxy,
           proxyUrl: form.proxyUrl.trim() || undefined,
           requestTimeoutSeconds: form.requestTimeoutSeconds,
-          defaultCloneProtocol: form.defaultCloneProtocol,
           sshHostAlias: form.sshHostAlias.trim() || undefined,
           apiPathPrefix: form.apiPathPrefix.trim() || undefined,
         }
@@ -368,6 +369,7 @@ function buildPayload(): AddAccountPayload {
     apiBaseUrl: form.apiBaseUrl.trim() || undefined,
     token: form.token,
     remark: form.remark.trim() || undefined,
+    defaultCloneProtocol: form.defaultCloneProtocol,
     instanceConfig,
   };
 }
