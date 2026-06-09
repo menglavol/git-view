@@ -78,7 +78,7 @@
         </template>
       </ElTableColumn>
 
-      <ElTableColumn label="操作" width="180" fixed="right">
+      <ElTableColumn label="操作" width="260" fixed="right">
         <template #default="{ row }">
           <ElButtonGroup>
             <ElButton
@@ -96,6 +96,15 @@
             >
               重试
             </ElButton>
+            <!-- 仅 SSH 密钥类失败显示：一键跳转对应平台的 SSH 公钥设置页 -->
+            <ElButton
+              v-if="row.status === 'failed' && isSshKeyError(row.errorMessage)"
+              size="small"
+              type="primary"
+              @click="onConfigureSsh(row)"
+            >
+              配置 SSH 密钥
+            </ElButton>
           </ElButtonGroup>
         </template>
       </ElTableColumn>
@@ -106,6 +115,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 
 import { useCloneTaskStore } from '@/stores/cloneTask';
 import type { CloneTask, CloneTaskStatus } from '@/types/cloneTask';
@@ -184,6 +194,46 @@ async function onRetry(row: CloneTask): Promise<void> {
     ElMessage.success('已重新入队');
   } catch (e) {
     ElMessage.error(`重试失败：${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** 判断错误是否为 SSH 密钥类（后端 classify_clone_failure 打的中文标记）。 */
+function isSshKeyError(msg?: string): boolean {
+  return !!msg && msg.includes('SSH 认证失败');
+}
+
+/** 从远程 URL 解析出 host（兼容 scp-like、ssh://、https:// 三种形式）。 */
+function parseHost(remoteUrl: string): string | null {
+  const u = remoteUrl.trim();
+  // scp-like：git@host:owner/repo.git
+  const scp = /^git@([^:]+):/.exec(u);
+  if (scp) return scp[1];
+  // ssh://[git@]host[:port]/... 或 https?://host[:port]/...
+  const m = /^(?:ssh|https?):\/\/(?:[^@/]+@)?([^:/]+)/.exec(u);
+  return m ? m[1] : null;
+}
+
+/** 按 host 推导对应平台的 SSH 公钥设置页；GitHub/Gitee 固定，其余按 GitLab 规则。 */
+function sshSettingsUrl(remoteUrl: string): string | null {
+  const host = parseHost(remoteUrl);
+  if (!host) return null;
+  if (host === 'github.com') return 'https://github.com/settings/keys';
+  if (host === 'gitee.com') return 'https://gitee.com/profile/sshkeys';
+  // 其余按 GitLab 处理（含自建实例）
+  return `https://${host}/-/user_settings/ssh_keys`;
+}
+
+/** 用系统浏览器打开该仓库平台的 SSH 公钥设置页，引导用户配置密钥后重试。 */
+async function onConfigureSsh(row: CloneTask): Promise<void> {
+  const url = sshSettingsUrl(row.remoteUrl);
+  if (!url) {
+    ElMessage.warning('无法识别该仓库的平台地址');
+    return;
+  }
+  try {
+    await openExternal(url);
+  } catch (e) {
+    ElMessage.error(`打开失败：${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

@@ -225,12 +225,13 @@ impl GitCliService {
             }
         };
 
-        let _ = parser_handle.await;
+        // 取出 reader 累积的 stderr 末尾行，供失败分类（如 SSH 公钥缺失）
+        let stderr_tail = parser_handle.await.unwrap_or_default();
 
         if !exit_status.success() {
             cleanup_partial_clone(target_path, preserve_target_dir);
             let code = exit_status.code().unwrap_or(-1);
-            return Err(GitViewError::GitCommand(format!("git clone 退出码 {code}")));
+            return Err(classify_clone_failure(code, &stderr_tail));
         }
 
         Ok(())
@@ -680,6 +681,27 @@ fn map_network_failure(label: &str, stderr: &str) -> GitViewError {
     GitViewError::GitCommand(format!("git {label} 失败：{stderr}"))
 }
 
+/// 根据 git clone 退出码与 stderr 末尾行分类失败原因。
+///
+/// 重点识别 SSH 公钥缺失/未授权（错误消息带「SSH 认证失败」标记，前端据此
+/// 引导用户去平台配置 SSH key）；其余回退为含退出码与简要 stderr 的通用错误。
+fn classify_clone_failure(code: i32, stderr_tail: &[String]) -> GitViewError {
+    let joined = stderr_tail.join("\n");
+    let lower = joined.to_lowercase();
+    // publickey 出现在 "Permission denied (publickey)"；host key verification failed
+    // 是首次连接未信任主机 —— 两者都属本机 SSH 未就绪，引导去平台配公钥
+    if lower.contains("publickey") || lower.contains("host key verification failed") {
+        return GitViewError::GitCommand(format!(
+            "SSH 认证失败（缺少或未授权 SSH 密钥）：请在对应平台账户设置中添加本机 SSH 公钥后重试。{joined}"
+        ));
+    }
+    if joined.is_empty() {
+        GitViewError::GitCommand(format!("git clone 退出码 {code}"))
+    } else {
+        GitViewError::GitCommand(format!("git clone 退出码 {code}：{joined}"))
+    }
+}
+
 /// 校验子进程退出状态，失败时把 stderr 拼入错误信息。
 fn ensure_success(output: &std::process::Output, label: &str) -> Result<()> {
     if output.status.success() {
@@ -866,18 +888,26 @@ fn split_progress_lines(buf: &str) -> impl Iterator<Item = &str> {
     buf.split(['\r', '\n'])
 }
 
-fn spawn_progress_reader<F>(child: &mut Child, progress: Arc<F>) -> tokio::task::JoinHandle<()>
+fn spawn_progress_reader<F>(
+    child: &mut Child,
+    progress: Arc<F>,
+) -> tokio::task::JoinHandle<Vec<String>>
 where
     F: Fn(CloneProgressEvent) + Send + Sync + 'static,
 {
-    // 拿不到 stderr（极少见，比如已被消费）时返回一个空 future，等价于 noop
+    // 拿不到 stderr（极少见，比如已被消费）时返回空行集合，等价于 noop
     let Some(stderr) = child.stderr.take() else {
-        return tokio::spawn(async {});
+        return tokio::spawn(async { Vec::new() });
     };
 
     tokio::spawn(async move {
+        // 仅保留最近 MAX_TAIL 行 stderr（已脱敏），供 clone 失败时识别错误（如 SSH 公钥缺失）；
+        // const 置于块首以满足 clippy items-after-statements。
+        const MAX_TAIL: usize = 30;
         let mut reader = BufReader::new(stderr);
         let mut chunk = Vec::new();
+        // 滚动窗口：超过上限丢最旧行，避免大仓库进度刷屏导致无限增长
+        let mut tail: std::collections::VecDeque<String> = std::collections::VecDeque::new();
         loop {
             // Ok(0) 表示 EOF，Err 表示 IO 异常——两者均退出循环
             match reader.read_until(b'\n', &mut chunk).await {
@@ -887,11 +917,20 @@ where
             let text = String::from_utf8_lossy(&chunk).to_string();
             chunk.clear();
             for line in split_progress_lines(&text) {
+                let trimmed = line.trim();
+                // 非空行累积进 tail（超出上限丢最旧的），进度行另行解析推送
+                if !trimmed.is_empty() {
+                    tail.push_back(redact_token(trimmed));
+                    if tail.len() > MAX_TAIL {
+                        tail.pop_front();
+                    }
+                }
                 if let Some(ev) = parse_progress_line(line) {
                     (progress)(ev);
                 }
             }
         }
+        tail.into_iter().collect()
     })
 }
 
@@ -1243,6 +1282,37 @@ mod tests {
     fn map_network_failure_fallthrough_is_git_command() {
         let err = map_network_failure("pull", "some unknown failure");
         assert!(matches!(err, GitViewError::GitCommand(_)));
+    }
+
+    #[test]
+    fn classify_clone_failure_detects_ssh_publickey() {
+        let tail = vec![
+            "git@github.com: Permission denied (publickey).".to_string(),
+            "fatal: Could not read from remote repository.".to_string(),
+        ];
+        let GitViewError::GitCommand(msg) = classify_clone_failure(128, &tail) else {
+            panic!("应分类为 GitCommand");
+        };
+        assert!(msg.contains("SSH 认证失败"));
+    }
+
+    #[test]
+    fn classify_clone_failure_detects_host_key() {
+        let tail = vec!["Host key verification failed.".to_string()];
+        let GitViewError::GitCommand(msg) = classify_clone_failure(128, &tail) else {
+            panic!("应分类为 GitCommand");
+        };
+        assert!(msg.contains("SSH 认证失败"));
+    }
+
+    #[test]
+    fn classify_clone_failure_generic_fallthrough() {
+        let tail = vec!["fatal: repository not found".to_string()];
+        let GitViewError::GitCommand(msg) = classify_clone_failure(128, &tail) else {
+            panic!("应分类为 GitCommand");
+        };
+        assert!(!msg.contains("SSH 认证失败"));
+        assert!(msg.contains("128"));
     }
 
     // -------------------------------------------------------------------
