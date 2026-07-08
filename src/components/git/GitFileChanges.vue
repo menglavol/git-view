@@ -43,9 +43,22 @@
     </header>
 
     <!-- ============ 已暂存段 ============ -->
-    <section class="section">
-      <h4 class="section-title">已暂存 ({{ staged.length }})</h4>
-      <div v-if="staged.length === 0" class="empty-hint">无</div>
+    <section class="section" :class="{ collapsed: !stagedExpanded }">
+      <!-- 可点击折叠头:整行可点,带 aria 展开态与三角图标,计数常驻可见 -->
+      <h4
+        class="section-title"
+        role="button"
+        tabindex="0"
+        :aria-expanded="stagedExpanded"
+        @click="stagedExpanded = !stagedExpanded"
+        @keydown.enter.prevent="stagedExpanded = !stagedExpanded"
+        @keydown.space.prevent="stagedExpanded = !stagedExpanded"
+      >
+        <span class="collapse-caret" :class="{ expanded: stagedExpanded }">▶</span>
+        已暂存 ({{ staged.length }})
+      </h4>
+      <div v-if="!stagedExpanded" class="collapsed-hint" />
+      <div v-else-if="staged.length === 0" class="empty-hint">无</div>
       <ul v-else class="file-list">
         <li
           v-for="file in staged"
@@ -70,9 +83,22 @@
     </section>
 
     <!-- ============ 未暂存段（含 untracked / modified / deleted / conflicted） ============ -->
-    <section class="section">
-      <h4 class="section-title">未暂存 ({{ unstaged.length }})</h4>
-      <div v-if="unstaged.length === 0" class="empty-hint">无</div>
+    <section class="section" :class="{ collapsed: !unstagedExpanded }">
+      <!-- 可点击折叠头:整行可点,带 aria 展开态与三角图标,计数常驻可见 -->
+      <h4
+        class="section-title"
+        role="button"
+        tabindex="0"
+        :aria-expanded="unstagedExpanded"
+        @click="unstagedExpanded = !unstagedExpanded"
+        @keydown.enter.prevent="unstagedExpanded = !unstagedExpanded"
+        @keydown.space.prevent="unstagedExpanded = !unstagedExpanded"
+      >
+        <span class="collapse-caret" :class="{ expanded: unstagedExpanded }">▶</span>
+        未暂存 ({{ unstaged.length }})
+      </h4>
+      <div v-if="!unstagedExpanded" class="collapsed-hint" />
+      <div v-else-if="unstaged.length === 0" class="empty-hint">无</div>
       <ul v-else class="file-list">
         <li
           v-for="file in unstaged"
@@ -137,6 +163,15 @@ const emit = defineEmits<{
 
 /** 当前过滤条件:'all' 时不过滤,否则按 FileStatus 精确匹配。 */
 const filterStatus = ref<'all' | FileStatus>('all');
+
+/**
+ * 两个分段（已暂存 / 未暂存）的展开状态,默认均展开。
+ *
+ * WHY 用组件内 ref 而非持久化:折叠只是「本次会话内的临时视图偏好」,
+ * 用户切换文件 / 切换仓库时保持,但重启应用回归默认展开即可,无需落库。
+ */
+const stagedExpanded = ref(true);
+const unstagedExpanded = ref(true);
 
 /** 应用过滤条件后的可见文件列表。 */
 const visibleChanges = computed(() => {
@@ -217,6 +252,7 @@ function onCancelDiscard(): void {
   flex-direction: column; /* 纵向排布 */
   gap: 8px; /* 段落间距 */
   height: 100%; /* 占满父高 */
+  min-height: 0; /* 允许内部 flex 子元素在超高时收缩并滚动 */
 }
 
 /* 顶部工具栏:横排过滤器与全局按钮 */
@@ -224,17 +260,55 @@ function onCancelDiscard(): void {
   display: flex; /* 横向排布 */
   gap: 8px; /* 控件间距 */
   align-items: center; /* 垂直居中 */
+  flex: 0 0 auto; /* 工具栏定高,不随内容伸缩,把剩余空间让给下方两段 */
 }
 /* 过滤器固定宽度,避免抖动 */
 .filter-select {
   width: 110px; /* 固定宽度让 UI 稳定 */
 }
 
-/* 分段标题:轻量视觉分割,不抢占主内容 */
+/* 分段:纵向 flex,两段平分剩余高度,各自内部滚动。
+   WHY:父列 .col 为 overflow:hidden,若本段不自管溢出,文件多时会把父容器撑破、
+   超出部分被裁剪且无滚动条(原缺陷)。故每段 flex:1 + min-height:0,列表再 overflow。 */
+.section {
+  display: flex; /* 纵向:标题在上,列表在下 */
+  flex-direction: column;
+  flex: 1; /* 两段平分剩余空间 */
+  min-height: 0; /* 关键:允许子列表在超高时收缩触发滚动,而非撑高父容器 */
+}
+/* 折叠态:不再参与高度平分,收缩到仅标题高,把空间让给展开的另一段 */
+.section.collapsed {
+  flex: 0 0 auto;
+}
+
+/* 分段标题:轻量视觉分割,作为可点击折叠头 */
 .section-title {
   font-size: 13px; /* 略小于正文,作为副标题 */
   color: var(--el-text-color-secondary); /* 次色 */
   margin: 6px 0 4px 0; /* 上下间距收紧 */
+  flex: 0 0 auto; /* 标题定高,不被列表挤压 */
+  display: flex; /* 三角图标与文字横向对齐 */
+  align-items: center;
+  gap: 4px; /* 图标与文字间距 */
+  cursor: pointer; /* 提示可点击折叠 */
+  user-select: none; /* 折叠交互不选中文字 */
+}
+.section-title:hover {
+  color: var(--el-text-color-primary); /* hover 提示可交互 */
+}
+/* 折叠三角:展开态旋转 90° 指向下方,带过渡 */
+.collapse-caret {
+  display: inline-block;
+  font-size: 10px; /* 小三角,不抢视觉 */
+  transition: transform 0.15s; /* 展开/折叠平滑旋转 */
+  color: var(--el-text-color-placeholder);
+}
+.collapse-caret.expanded {
+  transform: rotate(90deg); /* 展开时三角朝下 */
+}
+/* 折叠态占位:保持段间 gap 视觉稳定(无内容但不塌陷) */
+.collapsed-hint {
+  height: 0;
 }
 
 /* 空状态文案:次色斜体 */
@@ -245,11 +319,16 @@ function onCancelDiscard(): void {
   padding-left: 8px; /* 与列表项对齐 */
 }
 
-/* 文件列表:取消默认 ul 样式 */
+/* 文件列表:取消默认 ul 样式,并在段内独立滚动。
+   flex:1 + min-height:0 让列表吃满段内剩余高度;overflow-y:auto 使文件多时
+   在段内滚动而非把 .section 撑高——这是「变更列表完整可见」的关键修复。 */
 .file-list {
   list-style: none; /* 去掉项目符号 */
   padding: 0; /* 重置 */
   margin: 0; /* 重置 */
+  flex: 1; /* 吃满段内剩余高度 */
+  min-height: 0; /* 允许收缩以触发自身滚动 */
+  overflow-y: auto; /* 文件超高时段内滚动 */
 }
 
 /* 单行:横排 + 悬停高亮提示可点击 */
