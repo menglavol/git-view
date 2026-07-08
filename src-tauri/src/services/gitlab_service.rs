@@ -150,6 +150,12 @@ struct GitLabCommitResp {
     stats: Option<GitLabStats>,
 }
 
+/// GitLab 分支列表项字段子集（仅取分支名）。
+#[derive(Debug, Deserialize)]
+struct GitLabBranchResp {
+    name: String,
+}
+
 /// GitLab 单提交 diff 端点的单文件项（无 per-file 增删数）。
 #[derive(Debug, Deserialize)]
 struct GitLabDiffResp {
@@ -425,6 +431,58 @@ impl GitHostingProvider for GitLabProvider {
         })?;
 
         Ok(map_gitlab_project(project, account_id, Utc::now()))
+    }
+
+    async fn list_branches(&self, repo: &RemoteRepository) -> Result<Vec<String>> {
+        // GitLab 用 project id（remote_id）拼 URL；分支接口按页返回，最多 100/页。
+        // 用 x-next-page 头判断是否还有下一页，逐页聚合直到取完（克隆选分支需完整列表）。
+        let mut branches = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let url = format!(
+                "{}/projects/{}/repository/branches?per_page=100&page={}",
+                self.api_base_url.trim_end_matches('/'),
+                repo.remote_id,
+                page,
+            );
+
+            let resp = self
+                .client
+                .get(&url)
+                .header("PRIVATE-TOKEN", &self.token)
+                .send()
+                .await
+                .map_err(|e| map_request_error("GitLab", &e))?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(map_status_error("GitLab", status.as_u16()));
+            }
+
+            // x-next-page 非空且 > 0 表示还有下一页（消费 body 前先取头）
+            let next_page = resp
+                .headers()
+                .get("x-next-page")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u32>().ok());
+            let has_next = next_page.is_some_and(|n| n > 0);
+
+            let list: Vec<GitLabBranchResp> = resp.json().await.map_err(|e| {
+                GitViewError::ResponseDecode(format!(
+                    "解析 GitLab 分支列表失败：{}",
+                    redact_token(&e.to_string())
+                ))
+            })?;
+
+            branches.extend(list.into_iter().map(|b| b.name));
+
+            if !has_next {
+                break;
+            }
+            page += 1;
+        }
+
+        Ok(branches)
     }
 }
 

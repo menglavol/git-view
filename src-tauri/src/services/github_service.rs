@@ -111,6 +111,12 @@ struct GitHubOwner {
     login: String,
 }
 
+/// GitHub 分支列表项字段子集（仅取分支名）。
+#[derive(Debug, Deserialize)]
+struct GitHubBranchResp {
+    name: String,
+}
+
 /// GitHub 提交列表项字段子集。
 #[derive(Debug, Deserialize)]
 struct GitHubCommitListResp {
@@ -421,6 +427,60 @@ impl GitHostingProvider for GitHubProvider {
         })?;
 
         Ok(map_github_repo(repo, account_id, Utc::now()))
+    }
+
+    async fn list_branches(&self, repo: &RemoteRepository) -> Result<Vec<String>> {
+        // GitHub 分支接口按页返回，最多 100/页；用 Link 头判断是否还有下一页。
+        // 逐页聚合直到无 next，保证分支多的仓库也能拿全（克隆选分支需完整列表）。
+        let mut branches = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let url = format!(
+                "{}/repos/{}/{}/branches?per_page=100&page={}",
+                self.api_base_url.trim_end_matches('/'),
+                repo.owner,
+                repo.name,
+                page,
+            );
+
+            let resp = self
+                .client
+                .get(&url)
+                .bearer_auth(&self.token)
+                .header(header::ACCEPT, "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .send()
+                .await
+                .map_err(|e| map_request_error("GitHub", &e))?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(map_status_error("GitHub", status.as_u16()));
+            }
+
+            // 先取 Link 头（消费 body 前），据此决定是否继续翻页
+            let has_next = resp
+                .headers()
+                .get("link")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|h| h.contains("rel=\"next\""));
+
+            let list: Vec<GitHubBranchResp> = resp.json().await.map_err(|e| {
+                GitViewError::ResponseDecode(format!(
+                    "解析 GitHub 分支列表失败：{}",
+                    redact_token(&e.to_string())
+                ))
+            })?;
+
+            branches.extend(list.into_iter().map(|b| b.name));
+
+            if !has_next {
+                break;
+            }
+            page += 1;
+        }
+
+        Ok(branches)
     }
 }
 

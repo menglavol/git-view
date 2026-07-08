@@ -125,6 +125,12 @@ struct GiteeOwner {
     login: String,
 }
 
+/// Gitee 分支列表项字段子集（仅取分支名）。
+#[derive(Debug, Deserialize)]
+struct GiteeBranchResp {
+    name: String,
+}
+
 /// Gitee 提交列表项字段子集（API 形态对齐 GitHub）。
 #[derive(Debug, Deserialize)]
 struct GiteeCommitListResp {
@@ -463,6 +469,63 @@ impl GitHostingProvider for GiteeProvider {
         })?;
 
         Ok(map_gitee_repo(repo, account_id, Utc::now()))
+    }
+
+    async fn list_branches(&self, repo: &RemoteRepository) -> Result<Vec<String>> {
+        // Gitee 分支接口按页返回；Gitee 无 Link / x-next-page 头，故满页即认为
+        // 还有下一页，逐页聚合直到取到不满页为止（克隆选分支需完整列表）。
+        const PER_PAGE: u32 = 100;
+        let mut branches = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let base = format!(
+                "{}/repos/{}/{}/branches?per_page={}&page={}",
+                self.api_base_url.trim_end_matches('/'),
+                repo.owner,
+                repo.name,
+                PER_PAGE,
+                page,
+            );
+
+            // 与其它 Gitee 接口一致：按 auth_mode 决定 token 走 Header 还是 Query
+            let req = match self.auth_mode {
+                GiteeAuthMode::Header => self
+                    .client
+                    .get(&base)
+                    .header("Authorization", format!("token {}", self.token)),
+                GiteeAuthMode::Query => self
+                    .client
+                    .get(&base)
+                    .query(&[("access_token", &self.token)]),
+            };
+
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| map_request_error("Gitee", &e))?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(map_status_error("Gitee", status.as_u16()));
+            }
+
+            let list: Vec<GiteeBranchResp> = resp.json().await.map_err(|e| {
+                GitViewError::ResponseDecode(format!(
+                    "解析 Gitee 分支列表失败：{}",
+                    redact_token(&e.to_string())
+                ))
+            })?;
+
+            // 满页才继续翻页：不满 PER_PAGE 说明已到末页
+            let full_page = list.len() == PER_PAGE as usize;
+            branches.extend(list.into_iter().map(|b| b.name));
+
+            if !full_page {
+                break;
+            }
+            page += 1;
+        }
+
+        Ok(branches)
     }
 }
 

@@ -46,6 +46,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "004_add_account_clone_protocol",
         sql: include_str!("migrations/004_add_account_clone_protocol.sql"),
     },
+    Migration {
+        version: 5,
+        name: "005_add_clone_task_branch",
+        sql: include_str!("migrations/005_add_clone_task_branch.sql"),
+    },
 ];
 
 /// 在指定连接池上运行所有未应用的迁移。
