@@ -197,8 +197,12 @@ const emit = defineEmits<{
 const tableRef = ref<TableInstance>();
 
 // 把扁平仓库列表转成目录森林（可能多棵树，如跨盘符）；
-// items 变化时 computed 自动重建，无需手动同步
-const treeData = computed(() => buildRepoForest(props.items));
+// items 变化时 computed 自动重建，无需手动同步。
+// 顶层的父目录行（根 dir 节点）信息已由页面上方的概览卡承载，此处将其 children
+// 上提为顶层，去掉冗余的最顶层父目录行；顶层若本身是仓库（合并节点）则原样保留。
+const treeData = computed(() =>
+  buildRepoForest(props.items).flatMap((node) => (node.type === 'dir' ? node.children : [node])),
+);
 
 /** 取节点的子节点列表：目录必有 children；合并的仓库节点可选携带 children。 */
 function childrenOf(node: RepoTreeNode): RepoTreeNode[] {
