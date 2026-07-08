@@ -56,4 +56,9 @@ export const remoteRepositoryApi = {
   getCommitDetail(repoId: string, sha: string): Promise<CommitDetail> {
     return invokeCmd<CommitDetail>('get_remote_commit_detail', { repoId, sha });
   },
+
+  /** 拉取远程仓库的分支列表（从平台 API，供克隆时选择分支）。 */
+  listBranches(repoId: string): Promise<string[]> {
+    return invokeCmd<string[]>('list_remote_branches', { repoId });
+  },
 };

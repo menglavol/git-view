@@ -16,6 +16,8 @@ export interface CreateCloneTasksPayload {
   autoAddToLocal: boolean;
   /** 每个仓库的自定义目标目录末段名（key = remoteRepositoryId），缺省回退仓库名 */
   dirNameOverrides?: Record<string, string>;
+  /** 每个仓库要克隆的分支（key = remoteRepositoryId），缺省 / 空则克隆默认分支 */
+  branches?: Record<string, string>;
 }
 
 /** Clone 进度事件。 */

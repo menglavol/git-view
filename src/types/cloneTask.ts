@@ -20,4 +20,6 @@ export interface CloneTask {
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
+  /** 要克隆的分支；缺省（undefined）表示克隆远端默认分支 */
+  branch?: string;
 }
