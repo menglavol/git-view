@@ -104,6 +104,15 @@ pub trait GitHostingProvider: Send + Sync {
         Err(GitViewError::Internal("该平台暂不支持提交历史".to_string()))
     }
 
+    /// 列出远程仓库的所有分支名（用于「克隆时选择分支」）。
+    ///
+    /// 返回纯分支名列表（不含 `refs/heads/` 前缀）。默认实现返回仅含
+    /// 仓库默认分支的单元素列表：这样即便某平台尚未实现真正的分支列表 API，
+    /// 前端仍至少能选到默认分支，克隆功能不被阻断（见 research.md 决策）。
+    async fn list_branches(&self, repo: &RemoteRepository) -> Result<Vec<String>> {
+        Ok(vec![repo.default_branch.clone()])
+    }
+
     /// 获取单个提交的详情（元信息 + 改动文件 + 每文件 diff）。
     ///
     /// 默认实现表示该平台尚未支持。

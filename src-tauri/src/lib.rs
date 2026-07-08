@@ -191,6 +191,7 @@ pub fn run() {
             commands::remote_repositories::toggle_favorite_remote_repository,
             commands::remote_repositories::list_remote_commits,
             commands::remote_repositories::get_remote_commit_detail,
+            commands::remote_repositories::list_remote_branches,
             // US3 Clone 任务
             commands::clone_tasks::create_clone_tasks,
             commands::clone_tasks::start_clone_tasks,

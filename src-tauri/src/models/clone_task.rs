@@ -36,6 +36,10 @@ pub struct CloneTask {
     pub remote_url: String,
     /// 目标本地路径
     pub target_path: String,
+    /// 要克隆的分支（None = 克隆远端默认分支，对应 `git clone` 不带 `--branch`）。
+    /// 旧任务（迁移前入库）该列为 NULL，语义即「默认分支」，向后兼容。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
     /// 任务状态
     pub status: CloneTaskStatus,
     /// 进度百分比（0-100，仅 `Running` 状态有意义）

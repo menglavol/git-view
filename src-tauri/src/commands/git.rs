@@ -30,9 +30,10 @@ use crate::db::pool::DbPool;
 use crate::errors::{GitViewError, Result};
 use crate::models::git::{Branch, CommitDetail, CommitInfo, GitStatus};
 use crate::models::operation_log::{OperationStatus, OperationType};
+use crate::models::settings::{PullStrategy, PushStrategy};
 use crate::services::git_cli_service::GitCliService;
 use crate::services::git_reader_service::{self, DiffResult};
-use crate::services::{log_service, repository_service};
+use crate::services::{log_service, repository_service, settings_service};
 use crate::AppState;
 
 /// 根据 repo_id 取出仓库的本地路径。
@@ -45,12 +46,41 @@ fn resolve_repo_path(state: &AppState, repo_id: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(repo.local_path))
 }
 
-/// 构造默认 git CLI 服务（PATH 中的 git）。
+/// 依据「设置 → Git」中保存的可执行路径构造 git CLI 服务。
 ///
-/// GitView 不内置 git，直接复用系统 PATH 中的可执行文件；其可用性
-/// 由 US7 的环境检测负责，这里只做最简单的默认构造，避免重复探测开销。
-fn make_git_cli() -> GitCliService {
-    GitCliService::with_path(PathBuf::from("git"))
+/// 用户在设置里指定过自定义 git 路径时优先采信；未配置或读取设置失败则
+/// 回退到 PATH 中的 `git`。这样「设置 → Git 可执行文件路径」才能真正作用于
+/// fetch/pull/push/commit 等所有实际 Git 操作（此前恒用 `"git"`，设置形同虚设）。
+fn make_git_cli_from_settings(state: &AppState) -> GitCliService {
+    // 读设置失败不阻断 Git 操作：回退到 PATH 中的 git，保证功能可用性
+    let path = settings_service::get_git(&state.db)
+        .ok()
+        .and_then(|g| g.git_executable_path)
+        .map_or_else(|| PathBuf::from("git"), PathBuf::from);
+    GitCliService::with_path(path)
+}
+
+/// 把 pull 策略映射为写入操作日志的命令串（便于用户核对本次用了哪种合并方式）。
+///
+/// 与 `git_cli_service::pull` 内部的参数映射保持一致：日志展示的命令即实际执行的命令。
+fn pull_log_command(strategy: PullStrategy) -> String {
+    match strategy {
+        PullStrategy::FfOnly => "git pull --ff-only".to_string(),
+        PullStrategy::Rebase => "git pull --rebase".to_string(),
+        PullStrategy::Merge => "git pull --no-ff".to_string(),
+    }
+}
+
+/// 把 push 策略映射为写入操作日志的命令串。
+///
+/// 反映实际注入的 `-c push.default=<v>`，使操作日志与真实执行一致。
+fn push_log_command(strategy: PushStrategy) -> String {
+    let value = match strategy {
+        PushStrategy::Simple => "simple",
+        PushStrategy::Current => "current",
+        PushStrategy::Upstream => "upstream",
+    };
+    format!("git -c push.default={value} push")
 }
 
 /// 取仓库路径末段目录名作为日志 target（比 UUID 形式的 repo_id 更可读）。
@@ -187,7 +217,9 @@ pub async fn git_stage_file(
     file: String,
 ) -> Result<()> {
     let path = resolve_repo_path(&state, &repo_id)?;
-    make_git_cli().stage_file(&path, &file).await
+    make_git_cli_from_settings(&state)
+        .stage_file(&path, &file)
+        .await
 }
 
 /// 把单个文件从暂存区移除（保留工作区修改）。
@@ -200,7 +232,9 @@ pub async fn git_unstage_file(
     file: String,
 ) -> Result<()> {
     let path = resolve_repo_path(&state, &repo_id)?;
-    make_git_cli().unstage_file(&path, &file).await
+    make_git_cli_from_settings(&state)
+        .unstage_file(&path, &file)
+        .await
 }
 
 /// 把当前工作区所有变更加入暂存区。
@@ -209,7 +243,7 @@ pub async fn git_unstage_file(
 #[tauri::command]
 pub async fn git_stage_all(state: State<'_, AppState>, repo_id: String) -> Result<()> {
     let path = resolve_repo_path(&state, &repo_id)?;
-    make_git_cli().stage_all(&path).await
+    make_git_cli_from_settings(&state).stage_all(&path).await
 }
 
 /// 清空整个暂存区（保留工作区修改）。
@@ -218,7 +252,7 @@ pub async fn git_stage_all(state: State<'_, AppState>, repo_id: String) -> Resul
 #[tauri::command]
 pub async fn git_unstage_all(state: State<'_, AppState>, repo_id: String) -> Result<()> {
     let path = resolve_repo_path(&state, &repo_id)?;
-    make_git_cli().unstage_all(&path).await
+    make_git_cli_from_settings(&state).unstage_all(&path).await
 }
 
 // =====================================================================
@@ -238,12 +272,22 @@ pub async fn git_commit(
 ) -> Result<String> {
     let path = resolve_repo_path(&state, &repo_id)?;
     let target = repo_name(&path);
-    let cli = make_git_cli();
+    let cli = make_git_cli_from_settings(&state);
+    // 读设置里的提交身份：仓库级缺失时用它补写 user.name/email，
+    // 修正「pre_commit_check 提示去设置配置，但设置从不写入 git config」的断链。
+    let git_settings = settings_service::get_git(&state.db).unwrap_or_default();
     let start = Instant::now();
     // 前置校验 + 提交作为整体记录：校验未通过也算一次失败的 commit。
     // 用 async 块把两步包成单个 Result，这样日志里一次 Commit 记录就能
     // 同时覆盖「校验失败」与「提交失败」，前端不必区分两种失败来源。
     let result = async {
+        // 先按设置补写仓库级身份（仓库级已有则不覆盖），再走五项校验。
+        cli.ensure_commit_identity(
+            &path,
+            git_settings.user_name.as_deref(),
+            git_settings.user_email.as_deref(),
+        )
+        .await?;
         cli.pre_commit_check(&path).await?;
         cli.commit(&path, &message, description.as_deref()).await
     }
@@ -277,7 +321,7 @@ pub async fn git_fetch(state: State<'_, AppState>, repo_id: String) -> Result<St
     let path = resolve_repo_path(&state, &repo_id)?;
     let target = repo_name(&path);
     let start = Instant::now();
-    let result = make_git_cli().fetch(&path).await;
+    let result = make_git_cli_from_settings(&state).fetch(&path).await;
     log_git_result(
         &state.db,
         OperationType::Fetch,
@@ -290,21 +334,28 @@ pub async fn git_fetch(state: State<'_, AppState>, repo_id: String) -> Result<St
     result
 }
 
-/// `git pull --ff-only`，遇分叉或冲突返回中文友好错误。
+/// `git pull`，按用户设置的默认 pull 策略执行，遇分叉或冲突返回中文友好错误。
 ///
-/// 只允许快进合并：避免在 GUI 里悄悄产生 merge commit 这种用户难以察觉的副作用，
-/// 分叉时明确报错让用户自己决定如何整合。
+/// 策略取自「设置 → Git → 默认 pull 策略」（FfOnly / Rebase / Merge），
+/// 通过 `pull(...)` 映射为对应 git 参数；日志命令串按实际策略动态生成，
+/// 便于用户在操作日志里核对本次 pull 究竟用了哪种合并方式。
 #[tauri::command]
 pub async fn git_pull(state: State<'_, AppState>, repo_id: String) -> Result<String> {
     let path = resolve_repo_path(&state, &repo_id)?;
     let target = repo_name(&path);
+    // 读设置里的默认 pull 策略；读失败回退 GitSettings 默认（FfOnly），不因设置异常阻断操作
+    let strategy = settings_service::get_git(&state.db)
+        .unwrap_or_default()
+        .default_pull_strategy;
     let start = Instant::now();
-    let result = make_git_cli().pull(&path).await;
+    let result = make_git_cli_from_settings(&state)
+        .pull(&path, strategy)
+        .await;
     log_git_result(
         &state.db,
         OperationType::Pull,
         &target,
-        "git pull --ff-only",
+        &pull_log_command(strategy),
         start,
         result.as_ref().err(),
         result.as_ref().ok().map(String::as_str),
@@ -312,21 +363,28 @@ pub async fn git_pull(state: State<'_, AppState>, repo_id: String) -> Result<Str
     result
 }
 
-/// `git push`，遇拒绝/无 upstream/鉴权失败返回中文友好错误。
+/// `git push`，按用户设置的默认 push 策略执行，遇拒绝/无 upstream/鉴权失败返回中文友好错误。
 ///
-/// 三类失败各映射成中文错误码，前端据此决定是提示「设置 upstream」还是「检查凭据」，
-/// 而不是把原始英文 stderr 直接抛给用户。
+/// 策略取自「设置 → Git → 默认 push 策略」（Simple / Current / Upstream），
+/// 通过 `-c push.default=<v>` 注入；三类失败各映射成中文错误码，前端据此决定
+/// 是提示「设置 upstream」还是「检查凭据」，而不是把原始英文 stderr 直接抛给用户。
 #[tauri::command]
 pub async fn git_push(state: State<'_, AppState>, repo_id: String) -> Result<String> {
     let path = resolve_repo_path(&state, &repo_id)?;
     let target = repo_name(&path);
+    // 读设置里的默认 push 策略；读失败回退 GitSettings 默认（Simple），不因设置异常阻断操作
+    let strategy = settings_service::get_git(&state.db)
+        .unwrap_or_default()
+        .default_push_strategy;
     let start = Instant::now();
-    let result = make_git_cli().push(&path).await;
+    let result = make_git_cli_from_settings(&state)
+        .push(&path, strategy)
+        .await;
     log_git_result(
         &state.db,
         OperationType::Push,
         &target,
-        "git push",
+        &push_log_command(strategy),
         start,
         result.as_ref().err(),
         result.as_ref().ok().map(String::as_str),
@@ -353,7 +411,9 @@ pub async fn git_checkout_branch(
     let path = resolve_repo_path(&state, &repo_id)?;
     let target = repo_name(&path);
     let start = Instant::now();
-    let result = make_git_cli().checkout_branch(&path, &branch).await;
+    let result = make_git_cli_from_settings(&state)
+        .checkout_branch(&path, &branch)
+        .await;
     log_git_result(
         &state.db,
         OperationType::Checkout,
@@ -380,7 +440,7 @@ pub async fn git_create_branch(
     let path = resolve_repo_path(&state, &repo_id)?;
     let target = repo_name(&path);
     let start = Instant::now();
-    let result = make_git_cli()
+    let result = make_git_cli_from_settings(&state)
         .create_branch(&path, &name, checkout.unwrap_or(false))
         .await;
     log_git_result(
@@ -416,7 +476,7 @@ pub async fn git_discard_changes(
     // 转成 &str 切片传给服务层：CLI 封装按引用消费文件列表，避免不必要的克隆
     let refs: Vec<&str> = files.iter().map(String::as_str).collect();
     let start = Instant::now();
-    let result = make_git_cli()
+    let result = make_git_cli_from_settings(&state)
         .discard_changes(&path, &refs, confirmed)
         .await;
     log_git_result(

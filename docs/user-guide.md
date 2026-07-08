@@ -82,6 +82,7 @@
    - **Clone 协议**：HTTPS / SSH(默认取自设置)。
    - **并发数**：1–8，默认 3。
    - **克隆完成后自动加入本地仓库**(默认开)。
+   - **克隆分支**：每个仓库预览行有分支下拉，默认选中该仓库的默认分支；展开下拉时按需从平台拉取完整分支列表(可搜索)，选择后克隆时用 `git clone --branch <分支>` 只检出该分支。分支列表拉取失败时回退为仅默认分支，不影响克隆。
    - 对话框底部预览每个仓库的最终目标路径。
 3. 确认后跳转「Clone 中心」。
 
@@ -134,6 +135,8 @@
 - **Push 无 upstream**：提供「创建 upstream 分支」按钮(`git push -u origin <branch>`)。
 - **Push 权限不足**：提示确认 PAT 是否含写权限。
 
+> **策略与身份即时生效**：在「设置 → Git」配置的默认 **pull 策略**(fast-forward / rebase / merge)、默认 **push 策略**(simple / current / upstream)以及 **user.name / user.email**，保存后立即作用于本页的 Pull / Push / Commit —— pull 按所选策略执行(如 rebase 时用 `git pull --rebase`)、push 按所选 `push.default` 执行、提交时若仓库无本地身份则用设置中的 user.name/email 自动补写(仓库已配置则不覆盖)。同理，「设置 → Git」指定的 **Git 可执行文件路径**对所有 Git 操作(fetch/pull/push/commit/checkout 等)生效。
+
 ---
 
 ## 7. 操作日志与诊断
@@ -154,7 +157,7 @@
 进入「设置」页，分五个标签：
 
 - **通用**：启动时打开上次仓库、启动时自动检查仓库状态、默认项目目录、默认 Clone 协议、默认并发数、默认目录组织方式、语言(中/英)、主题(浅色/深色/跟随系统)。标签底部另有「应用数据目录」与「日志与存储」两个维护分区，详见 8.1 / 8.2。
-- **Git**：Git 可执行文件路径(含「检测 Git」按钮)、user.name、user.email、默认 pull/push 策略。
+- **Git**：Git 可执行文件路径(含「检测 Git」按钮)、user.name、user.email、默认 pull/push 策略。以上四项保存后即在实际 Git 操作中生效——自定义路径作用于 fetch/pull/push/commit 等全部命令，pull/push 策略决定合并/推送方式，user.name/email 在仓库尚无身份时自动写入仓库级配置。
 - **网络**：HTTP/HTTPS 代理、使用系统代理、API 超时、Clone 超时。
 - **外部工具**：默认编辑器、终端、文件管理器，以及用 VS Code/Cursor/JetBrains 打开仓库的命令。
 - **账号与安全**：逐个账号显示**凭据状态**(「已存储」绿标 / 「凭据缺失」红标)，但**绝不显示 Token 明文**。

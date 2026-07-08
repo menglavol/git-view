@@ -110,3 +110,18 @@ pub async fn get_remote_commit_detail(
     let provider = account_service::provider_for_account(&state.db, &repo.account_id)?;
     provider.get_commit_detail(&repo, &sha).await
 }
+
+/// 列出远程仓库的全部分支名（供批量克隆时选择克隆分支）。
+///
+/// 同步取出仓库与 provider（不跨 await 持有 DB 锁），再异步调平台 branches API。
+/// 平台若不支持分支列表，Provider 默认实现回退为仅含默认分支的单元素列表，
+/// 保证前端下拉至少有默认分支可选、不阻断克隆。
+#[tauri::command]
+pub async fn list_remote_branches(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<String>> {
+    let repo = repository_service::get_remote_repository(&state.db, &repo_id)?;
+    let provider = account_service::provider_for_account(&state.db, &repo.account_id)?;
+    provider.list_branches(&repo).await
+}

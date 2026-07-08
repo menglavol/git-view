@@ -623,6 +623,15 @@ watch(selectedFile, () => {
   height: 100%; /* tab 内容占满 */
 }
 
+/* 左栏变更列表:占满除底部"当前查看"提示外的全部高度并允许内部滚动。
+   WHY:GitFileChanges 根元素与 .selected-file 是 .col-changes 的并列 flex 子元素,
+   给组件根补 flex:1 + min-height:0,确保 T016 的段内滚动链路从父列完整传导下来,
+   避免文件多时组件被撑高、把底部提示挤出可视区。 */
+.col-changes :deep(.git-file-changes) {
+  flex: 1;
+  min-height: 0;
+}
+
 /* 当前查看文件提示:左栏底部 */
 .selected-file {
   font-size: 12px; /* 小字提示 */

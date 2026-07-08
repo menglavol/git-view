@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::errors::{GitViewError, Result};
 use crate::models::git::FileStatus;
+use crate::models::settings::{PullStrategy, PushStrategy};
 use crate::utils::process::apply_no_window;
 use crate::utils::redact::redact_token;
 
@@ -163,6 +164,7 @@ impl GitCliService {
         remote_url: &str,
         target_path: &Path,
         preserve_target_dir: bool,
+        branch: Option<&str>,
         credentials: Option<CredentialInjection>,
         extra_env: &[(String, String)],
         progress: F,
@@ -182,8 +184,13 @@ impl GitCliService {
         cmd.arg("clone")
             .arg("--progress")
             .arg("-c")
-            .arg("credential.helper=")
-            .arg(remote_url)
+            .arg("credential.helper=");
+        // 指定分支时追加 `--branch <b>`：git clone 后 HEAD 即指向该分支；
+        // None（NULL=默认分支）时不加此参数，沿用远端默认分支行为。
+        if let Some(b) = branch.map(str::trim).filter(|s| !s.is_empty()) {
+            cmd.arg("--branch").arg(b);
+        }
+        cmd.arg(remote_url)
             .arg(target_path)
             .env("LC_ALL", "C")
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -388,12 +395,14 @@ impl GitCliService {
         Ok(format!("{stdout}{stderr}"))
     }
 
-    /// 快进合并远程更新。
+    /// 按用户设置的策略合并远程更新。
     ///
-    /// 对应 spec FR-040 / FR-041：默认使用 `--ff-only`，遇 non-fast-forward
-    /// 或冲突时返回带中文翻译的 `GitCommand` 错误，前端可按关键词区分提示。
-    pub async fn pull(&self, repo: &Path) -> Result<String> {
-        let output = self.run(&["pull", "--ff-only"], Some(repo), &[]).await?;
+    /// 对应 spec FR-040 / FR-041：策略取自「设置 → Git → 默认 pull 策略」，
+    /// 通过 [`pull_args`] 映射为 git 参数（`FfOnly → --ff-only`、`Rebase → --rebase`、
+    /// `Merge → --no-ff`）。遇 non-fast-forward 或冲突时返回带中文翻译的
+    /// `GitCommand` 错误，前端可按关键词区分提示。
+    pub async fn pull(&self, repo: &Path, strategy: PullStrategy) -> Result<String> {
+        let output = self.run(pull_args(strategy), Some(repo), &[]).await?;
         let stderr = redact_token(&String::from_utf8_lossy(&output.stderr));
         if !output.status.success() {
             let lower = stderr.to_lowercase();
@@ -416,12 +425,19 @@ impl GitCliService {
         Ok(format!("{stdout}{stderr}"))
     }
 
-    /// 推送当前分支到远程。
+    /// 按用户设置的策略推送当前分支到远程。
     ///
-    /// 对应 spec FR-042：解析常见拒绝原因（non-fast-forward / no upstream /
-    /// permission denied）映射到带中文友好提示的错误。
-    pub async fn push(&self, repo: &Path) -> Result<String> {
-        let output = self.run(&["push"], Some(repo), &[]).await?;
+    /// 对应 spec FR-042：策略取自「设置 → Git → 默认 push 策略」，通过
+    /// `-c push.default=<simple|current|upstream>` 注入后再执行 `push`。
+    /// 解析常见拒绝原因（non-fast-forward / no upstream / permission denied）
+    /// 映射到带中文友好提示的错误。
+    pub async fn push(&self, repo: &Path, strategy: PushStrategy) -> Result<String> {
+        // `-c push.default=<v>` 只对本次调用生效，不写入仓库 / 全局 config，
+        // 避免 GitView 的策略污染用户在命令行的既有 push 习惯。
+        let push_default = format!("push.default={}", push_default_value(strategy));
+        let output = self
+            .run(&["-c", &push_default, "push"], Some(repo), &[])
+            .await?;
         let stderr = redact_token(&String::from_utf8_lossy(&output.stderr));
         if !output.status.success() {
             let lower = stderr.to_lowercase();
@@ -672,6 +688,68 @@ impl GitCliService {
             return false;
         };
         output.status.success() && !output.stdout.is_empty()
+    }
+
+    /// 用设置中的提交身份补齐缺失的仓库级 `user.name` / `user.email`。
+    ///
+    /// 修正历史断链：此前设置里的 user.name/email 只落库、从不写入 git config，
+    /// 导致 [`Self::pre_commit_check`] 提示「请在设置中配置 Git 身份」却无处生效。
+    ///
+    /// WHY 优先级：**仅在该仓库缺失身份时才写入**（写仓库级 `.git/config`）。
+    /// 仓库级或全局若已有身份，一律不覆盖——尊重用户已在命令行/全局配置的既有身份，
+    /// GitView 只做「兜底补齐」，不做「强制统一」。设置未提供对应字段时同样跳过。
+    pub async fn ensure_commit_identity(
+        &self,
+        repo: &Path,
+        name: Option<&str>,
+        email: Option<&str>,
+    ) -> Result<()> {
+        // user.name：仓库级 + 全局都不存在，且设置提供了非空 name 时，写仓库级
+        if !self.git_config_present(repo, "user.name").await {
+            if let Some(n) = name.map(str::trim).filter(|s| !s.is_empty()) {
+                let output = self
+                    .run(&["config", "user.name", n], Some(repo), &[])
+                    .await?;
+                ensure_success(&output, "git config user.name")?;
+            }
+        }
+        // user.email：同上
+        if !self.git_config_present(repo, "user.email").await {
+            if let Some(e) = email.map(str::trim).filter(|s| !s.is_empty()) {
+                let output = self
+                    .run(&["config", "user.email", e], Some(repo), &[])
+                    .await?;
+                ensure_success(&output, "git config user.email")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// 把 [`PullStrategy`] 映射为 `git pull` 的参数数组。
+///
+/// 纯函数，便于单测；映射规则：
+///   - `FfOnly`  → `["pull", "--ff-only"]`（仅快进，默认；分叉时报错交用户决定）
+///   - `Rebase`  → `["pull", "--rebase"]`（变基到远端之上，保持线性历史）
+///   - `Merge`   → `["pull", "--no-ff"]`（允许合并，强制产生 merge commit 以留痕）
+#[must_use]
+const fn pull_args(strategy: PullStrategy) -> &'static [&'static str] {
+    match strategy {
+        PullStrategy::FfOnly => &["pull", "--ff-only"],
+        PullStrategy::Rebase => &["pull", "--rebase"],
+        PullStrategy::Merge => &["pull", "--no-ff"],
+    }
+}
+
+/// 把 [`PushStrategy`] 映射为 git `push.default` 配置值。
+///
+/// 纯函数，便于单测；通过 `-c push.default=<值>` 只对本次 push 生效。
+#[must_use]
+const fn push_default_value(strategy: PushStrategy) -> &'static str {
+    match strategy {
+        PushStrategy::Simple => "simple",
+        PushStrategy::Current => "current",
+        PushStrategy::Upstream => "upstream",
     }
 }
 
@@ -1095,6 +1173,23 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    #[test]
+    fn pull_args_maps_each_strategy() {
+        // FfOnly → --ff-only（仅快进）；Rebase → --rebase（变基）；
+        // Merge → --no-ff（强制生成 merge commit，语义显式）
+        assert_eq!(pull_args(PullStrategy::FfOnly), &["pull", "--ff-only"]);
+        assert_eq!(pull_args(PullStrategy::Rebase), &["pull", "--rebase"]);
+        assert_eq!(pull_args(PullStrategy::Merge), &["pull", "--no-ff"]);
+    }
+
+    #[test]
+    fn push_default_value_maps_each_strategy() {
+        // 与 git `push.default` 取值一一对应
+        assert_eq!(push_default_value(PushStrategy::Simple), "simple");
+        assert_eq!(push_default_value(PushStrategy::Current), "current");
+        assert_eq!(push_default_value(PushStrategy::Upstream), "upstream");
+    }
 
     #[test]
     fn parse_initializing() {

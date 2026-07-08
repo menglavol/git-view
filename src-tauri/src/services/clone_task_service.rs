@@ -154,6 +154,11 @@ pub struct CreateCloneTasksPayload {
     /// 缺省（未传 / 无对应项）或非法名（经 sanitize）时回退仓库名。
     #[serde(default)]
     pub dir_name_overrides: HashMap<String, String>,
+    /// 每个仓库要克隆的分支（key = remoteRepositoryId）。
+    /// 缺省（未传 / 无对应项）时该任务 branch 为 NULL，语义即克隆默认分支；
+    /// 前端仅需为「显式选了非默认分支」的仓库传值，减少无谓传参。
+    #[serde(default)]
+    pub branches: HashMap<String, String>,
 }
 
 /// 批量创建 clone 任务（status = pending）。
@@ -194,6 +199,13 @@ pub fn create_clone_tasks(
             );
             let task_id = Uuid::new_v4().to_string();
 
+            // 该仓库要克隆的分支：未指定 / 空串时为 None（NULL=克隆默认分支）
+            let branch: Option<String> = payload
+                .branches
+                .get(&repo.id)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+
             // 读该仓库所属账户的默认 clone 协议，决定用 SSH 还是 HTTPS 地址。
             // 在已持有的 conn 上直接查（避免嵌套 pool 取连接导致死锁）；读失败回退 https。
             let clone_protocol: String = conn
@@ -216,8 +228,8 @@ pub fn create_clone_tasks(
                 "INSERT INTO clone_tasks (
                     id, remote_repository_id, repository_name, remote_url,
                     target_path, status, progress, error_message,
-                    created_at, started_at, finished_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, 'pending', 0, NULL, ?6, NULL, NULL)",
+                    created_at, started_at, finished_at, branch
+                ) VALUES (?1, ?2, ?3, ?4, ?5, 'pending', 0, NULL, ?6, NULL, NULL, ?7)",
                 params![
                     task_id,
                     repo.id,
@@ -225,6 +237,7 @@ pub fn create_clone_tasks(
                     remote_url,
                     target.to_string_lossy(),
                     now_iso,
+                    branch,
                 ],
             );
 
@@ -245,6 +258,7 @@ pub fn create_clone_tasks(
                 created_at: Utc::now(),
                 started_at: None,
                 finished_at: None,
+                branch,
             });
         }
 
@@ -383,12 +397,19 @@ async fn run_one_task<R: tauri::Runtime>(
             &task.remote_url,
             &target_path,
             pre_existed,
+            task.branch.as_deref(),
             credentials,
             &proxy_env,
             progress_cb,
             cancel.clone(),
         )
         .await;
+
+    // 日志命令串：指定分支时体现 `--branch <b>`，便于事后核对本次克隆的分支
+    let clone_cmd = task.branch.as_deref().map_or_else(
+        || "git clone".to_string(),
+        |b| format!("git clone --branch {b}"),
+    );
 
     // US6：记录 clone 操作日志（耗时为 clone 调用的近似时长）
     #[allow(clippy::cast_possible_truncation)]
@@ -403,7 +424,7 @@ async fn run_one_task<R: tauri::Runtime>(
                 OperationType::Clone,
                 &task.repository_name,
                 OperationStatus::Success,
-                Some("git clone"),
+                Some(clone_cmd.as_str()),
                 None,
                 None,
                 duration_ms,
@@ -423,7 +444,7 @@ async fn run_one_task<R: tauri::Runtime>(
                 OperationType::Clone,
                 &task.repository_name,
                 OperationStatus::Cancelled,
-                Some("git clone"),
+                Some(clone_cmd.as_str()),
                 None,
                 None,
                 duration_ms,
@@ -444,7 +465,7 @@ async fn run_one_task<R: tauri::Runtime>(
                 OperationType::Clone,
                 &task.repository_name,
                 OperationStatus::Failed,
-                Some("git clone"),
+                Some(clone_cmd.as_str()),
                 None,
                 Some(&safe_msg),
                 duration_ms,
@@ -602,7 +623,7 @@ pub fn list_clone_tasks(pool: &DbPool) -> Result<Vec<CloneTask>> {
         let mut stmt = conn.prepare(
             "SELECT id, remote_repository_id, repository_name, remote_url,
                     target_path, status, progress, error_message,
-                    created_at, started_at, finished_at
+                    created_at, started_at, finished_at, branch
              FROM clone_tasks
              ORDER BY created_at DESC",
         )?;
@@ -620,7 +641,7 @@ fn load_task(pool: &DbPool, task_id: &str) -> Result<CloneTask> {
         conn.query_row(
             "SELECT id, remote_repository_id, repository_name, remote_url,
                     target_path, status, progress, error_message,
-                    created_at, started_at, finished_at
+                    created_at, started_at, finished_at, branch
              FROM clone_tasks WHERE id = ?1",
             [task_id],
             row_to_task,
@@ -820,6 +841,8 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<CloneTask> {
         created_at: parse_dt(&created_at_str)?,
         started_at: started_at_str.and_then(|s| parse_dt(&s).ok()),
         finished_at: finished_at_str.and_then(|s| parse_dt(&s).ok()),
+        // 旧任务无 branch 列时读出 NULL → None（语义=克隆默认分支）
+        branch: row.get("branch")?,
     })
 }
 
