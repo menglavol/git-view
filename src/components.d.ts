@@ -7,6 +7,7 @@ export {}
 
 declare module 'vue' {
   export interface GlobalComponents {
+    AboutUpdate: typeof import('./components/settings/AboutUpdate.vue')['default']
     AccountCard: typeof import('./components/account/AccountCard.vue')['default']
     AccountFormDialog: typeof import('./components/account/AccountFormDialog.vue')['default']
     AccountSwitcher: typeof import('./components/account/AccountSwitcher.vue')['default']

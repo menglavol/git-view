@@ -186,6 +186,14 @@
               {{ clearingLogs ? t('settings.storage.clearing') : t('settings.storage.clearLogs') }}
             </el-button>
           </el-form-item>
+
+          <!-- 关于与更新分区：应用内检查 / 下载 / 安装新版本（独立子组件，见 AboutUpdate.vue） -->
+          <el-divider content-position="left">
+            {{ t('settings.update.about') }}
+          </el-divider>
+
+          <!-- 关于与更新子组件：更新闭环自成状态机，与设置快照解耦 -->
+          <AboutUpdate />
         </el-form>
       </el-tab-pane>
 
