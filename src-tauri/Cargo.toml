@@ -29,6 +29,11 @@ tauri-plugin-dialog = "2.0"
 tauri-plugin-fs = "2.0"
 tauri-plugin-os = "2.0"
 tauri-plugin-shell = "2.0"
+# 应用内自动更新：检查 GitHub Releases、下载并 minisign 验签后原地安装
+# 更新后重启进程：安装完成后调用 relaunch() 让新版本生效
+# 依赖新增理由见 specs/003-app-auto-update/plan.md §Complexity Tracking
+tauri-plugin-updater = "2.0"
+tauri-plugin-process = "2.0"
 
 # ----- 异步运行时与工具 -----
 tokio = { version = "1", features = ["full"] }

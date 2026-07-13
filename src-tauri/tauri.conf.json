@@ -26,11 +26,20 @@
       "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Menglavoll/git-view/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_UPDATER_PUBKEY_FROM_T005"
+    }
+  },
   "bundle": {
     "active": true,
     "category": "DeveloperTool",
     "copyright": "Copyright © 2026 GitView Team",
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "shortDescription": "轻量级跨平台 Git 可视化客户端",
     "longDescription": "GitView 是一个支持 GitHub / GitLab / Gitee 多平台多账号管理的轻量级跨平台 Git 可视化客户端，聚焦多平台仓库统一浏览、批量克隆与日常 Git 操作可视化。",
     "icon": [

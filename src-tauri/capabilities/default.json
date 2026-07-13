@@ -1,12 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "GitView V1 默认 capabilities：仅授予 UI 必需的最小权限。文件系统/Shell 等危险操作均通过后端 #[tauri::command] 完成，不直接暴露给前端。后续 Phase 在 permissions 数组按 User Story 增量追加 command 白名单（先空，参见 plan.md §Tauri Command Contracts）。",
+  "description": "GitView V1 默认 capabilities：仅授予 UI 必需的最小权限。文件系统/Shell 等危险操作均通过后端 #[tauri::command] 完成，不直接暴露给前端。后续 Phase 在 permissions 数组按 User Story 增量追加 command 白名单（先空，参见 plan.md §Tauri Command Contracts）。应用内自动更新（feature 003）授予 updater:default（检查/下载/安装更新）与 process:allow-restart（更新安装后重启应用）。",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "dialog:default",
     "os:default",
-    "shell:allow-open"
+    "shell:allow-open",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
