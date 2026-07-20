@@ -176,5 +176,28 @@ export const zh = {
       deleteConfirmHint: '删除后该账号无法同步 / 克隆，需重新验证才能恢复。',
       deleteSuccess: '凭据已删除',
     },
+    // 关于与更新：应用内检查 / 下载 / 安装新版本（通用 Tab 底部）
+    update: {
+      about: '关于与更新', // 分区小标题
+      currentVersion: '当前版本', // 当前应用版本标签
+      checkUpdate: '检查更新', // 检查按钮
+      checking: '检查中…', // 检查进行中按钮态
+      upToDate: '已是最新版本', // 无新版时的提示
+      hasUpdate: '发现新版本 {version}', // 有新版时的提示（含版本占位）
+      checkFailed: '检查更新失败', // 检查失败提示前缀
+      // 下载与安装
+      downloadAndInstall: '下载并安装', // 下载安装按钮
+      later: '稍后', // 放弃本次更新按钮
+      installFailed: '下载或安装失败', // 下载/验签/安装失败前缀
+      // 安装完成后的重启引导（ElMessageBox）
+      restartTitle: '更新已就绪', // 重启引导标题
+      restartMessage: '新版本已安装，是否立即重启以生效？', // 重启引导正文
+      restartNow: '立即重启', // 立即重启按钮
+      restartLater: '稍后重启', // 稍后重启按钮
+      restartLaterHint: '将在下次启动应用时生效。', // 选择稍后重启后的提示
+      // 更新内容（发布说明）
+      releaseNotes: '更新内容', // release notes 标题
+      noReleaseNotes: '该版本未提供更新说明。', // 无 body 时的占位
+    },
   },
 };

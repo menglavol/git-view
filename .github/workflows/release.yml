@@ -8,6 +8,12 @@ name: Release
 #
 # 发布门禁（宪法 Principle III）：构建前先跑 Token 泄漏与凭据残留安全扫描。
 # 注：V1 暂未做 macOS 公证与 Windows 代码签名，首次运行警告的绕过方法见 README。
+#
+# 更新签名链路（应用内自动更新 003）：
+#   - 私钥来源：GitHub Secrets TAURI_SIGNING_PRIVATE_KEY / _PASSWORD（本机 signer generate 生成，绝不入库）
+#   - 产出：tauri-action 检测到签名环境变量后，为各平台 updater 包生成 .sig 并产出 latest.json
+#   - 公钥位置：src-tauri/tauri.conf.json 的 plugins.updater.pubkey（客户端内置，用于验签）
+#   - updater 兼容包由 bundle.createUpdaterArtifacts=true 自动产出（macOS .app.tar.gz / Windows / Linux .AppImage）
 # =====================================================================
 
 on:
@@ -64,6 +70,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 更新签名：注入 minisign 私钥与密码（来自 GitHub Secrets）。
+          # tauri-action 检测到即自动为 updater 包生成 .sig 签名并产出 latest.json。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           # 复用触发的 tag 作为 release 版本号
           tagName: ${{ github.ref_name }}

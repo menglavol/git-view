@@ -179,5 +179,28 @@ export const en = {
       deleteConfirmHint: 'The account cannot sync / clone afterwards until re-validated.',
       deleteSuccess: 'Credential deleted',
     },
+    // 关于与更新（通用 Tab 底部）：应用内检查 / 下载 / 安装新版本
+    update: {
+      about: 'About & Updates', // 分区标题
+      currentVersion: 'Current version', // 当前版本标签
+      checkUpdate: 'Check for updates', // 检查按钮
+      checking: 'Checking…', // 检查进行中按钮态
+      upToDate: 'You are on the latest version', // 已是最新
+      hasUpdate: 'New version {version} available', // 发现新版（含版本占位）
+      checkFailed: 'Failed to check for updates', // 检查失败前缀
+      // 下载与安装
+      downloadAndInstall: 'Download & install', // 下载安装按钮
+      later: 'Later', // 放弃本次更新按钮
+      installFailed: 'Failed to download or install the update', // 下载/安装失败前缀
+      // 安装完成后的重启引导
+      restartTitle: 'Update installed', // 重启引导标题
+      restartMessage: 'The update is installed. Restart now to apply it?', // 重启引导正文
+      restartNow: 'Restart now', // 立即重启
+      restartLater: 'Later', // 稍后重启
+      restartLaterHint: 'It will take effect on the next app launch.', // 稍后重启后的提示
+      // 更新内容（发布说明）
+      releaseNotes: "What's new", // 更新内容标题
+      noReleaseNotes: 'No release notes provided.', // 无发布说明占位
+    },
   },
 };

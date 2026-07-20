@@ -164,6 +164,10 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_os::init())
+        // 应用内自动更新：从 GitHub Releases 拉取 latest.json、验签后原地安装
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // 更新安装完成后重启应用（process 插件提供 relaunch 能力）
+        .plugin(tauri_plugin_process::init())
         // 应用启动阶段：执行迁移、注入 AppState
         .setup(|app| {
             // 引入 Manager trait 以使用 manage() 方法
