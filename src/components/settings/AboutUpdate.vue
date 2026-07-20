@@ -95,7 +95,7 @@
  * 用一个 phase 状态驱动整个更新闭环；Update 句柄缓存在 currentUpdate，
  * 供「下载并安装」复用（check 返回的句柄携带下载所需的上下文）。
  */
-import { onMounted, ref, computed } from 'vue';
+import { onMounted, ref, shallowRef, computed } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { getVersion } from '@tauri-apps/api/app';
@@ -126,7 +126,11 @@ const releaseNotes = ref<string | null>(null);
 // 失败时的脱敏错误信息，展示给用户。
 const errorMessage = ref('');
 // check 返回的 Update 句柄，缓存供下载安装复用；无更新时为 null。
-const currentUpdate = ref<Update | null>(null);
+// 用 shallowRef 而非 ref：Update 是带私有字段的插件 class，
+// ref 的深度解包（UnwrapRef）会拍平其类型并丢失 #private 品牌，
+// 导致传给 downloadAndInstall(update: Update) 时类型不匹配；
+// 且该句柄是外部对象，本就不应被 Vue 深度响应式化。
+const currentUpdate = shallowRef<Update | null>(null);
 
 // 下载进度：已下载字节与总字节（总字节未知时为 null，走不确定进度态）。
 const downloadedBytes = ref(0);
