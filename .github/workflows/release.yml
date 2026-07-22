@@ -36,17 +36,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        # pnpm 必须在 setup-node 之前安装，否则 setup-node 的 cache:'pnpm' 找不到可执行文件
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+
       - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # 使用 pnpm 缓存：项目用 pnpm-lock.yaml，cache:'npm' 会找 package-lock.json 不存在而报错
           cache: 'pnpm'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 8
 
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@stable
