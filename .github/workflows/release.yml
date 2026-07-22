@@ -37,10 +37,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup pnpm
-        # pnpm 必须在 setup-node 之前安装，否则 setup-node 的 cache:'pnpm' 找不到可执行文件
+        # 不指定 version：pnpm/action-setup@v4 自动从 package.json 的
+        # packageManager 字段读取版本（pnpm@8.9.0），避免两处版本冲突报错
         uses: pnpm/action-setup@v4
-        with:
-          version: 8
 
       - name: Setup Node 20
         uses: actions/setup-node@v4
