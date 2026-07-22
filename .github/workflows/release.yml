@@ -40,7 +40,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # 使用 pnpm 缓存：项目用 pnpm-lock.yaml，cache:'npm' 会找 package-lock.json 不存在而报错
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
 
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -57,7 +63,8 @@ jobs:
             librsvg2-dev
 
       - name: Install frontend deps
-        run: npm ci
+        # frozen-lockfile：严格按 pnpm-lock.yaml 安装，与本地开发环境一致
+        run: pnpm install --frozen-lockfile
 
       # 发布前安全门禁：仅在 Ubuntu 跑一次即可（脚本跨平台一致）
       - name: Security scan (token leak + credential cleanup)
